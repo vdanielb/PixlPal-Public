@@ -1,0 +1,23 @@
+{
+  "name": "pixelcam-ai",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "description": "Lovable for photo editing. AI never generates the photo — it edits it with tools.",
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "fetch:florence2": "bash scripts/fetch-florence2-model.sh",
+    "dev:web": "pnpm --filter @pixelcam/web dev",
+    "build:web": "pnpm --filter @pixelcam/web build",
+    "test": "pnpm test:engine && pnpm test:ai && pnpm test:web",
+    "test:engine": "cargo test --package pixelcam-engine",
+    "test:ai": "pnpm --filter @pixelcam/ai test",
+    "test:web": "pnpm --filter @pixelcam/web test",
+    "mock:llm": "node web/dev/mock-llm-server.mjs",
+    "deploy:web": "pnpm build:wasm && pnpm --filter @pixelcam/web cf:deploy"
+  },
+  "packageManager": "pnpm@10.33.3",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd"]
+  }
+}

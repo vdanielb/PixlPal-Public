@@ -1,0 +1,22 @@
+{
+  "name": "@pixelcam/ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Transport-agnostic editing agent: tool schemas derived from the operation metadata, a validating tool executor, and the agent loop. Runs in the browser today and inside a backend later without changes.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pixelcam/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

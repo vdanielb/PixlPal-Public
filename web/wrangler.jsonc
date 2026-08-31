@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pixelcam-web",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-07-28",
+  // SPA assets on the CDN; Worker handles /api/* first so the product key and
+  // anonymous chat quota never live in the browser bundle.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CHAT_QUOTA",
+      "id": "5994f941e4d24257bb2dd0700d06b76c",
+      "preview_id": "84603fc72baa4954b7030b2fcff20e6f"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "AGENT_RATE_LIMITER",
+      // Unique per Cloudflare account; pick an unused positive integer.
+      "namespace_id": "5701",
+      // Tool-calling turns hit /api/agent several times; keep this loose.
+      "simple": {
+        "limit": 40,
+        "period": 60
+      }
+    }
+  ],
+  "vars": {
+    "LLM_BASE_URL": "https://api.openai.com/v1",
+    "LLM_MODEL": "gpt-5.6-luna",
+    "CHAT_LIMIT": "3",
+    "MAX_USER_MESSAGE_CHARS": "1000",
+    "MAX_OUTPUT_TOKENS": "4096",
+    "AGENT_COMPLETION_TIMEOUT_MS": "90000"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,32 @@
+# Custom headers for Cloudflare Workers static assets.
+# https://developers.cloudflare.com/workers/static-assets/headers/
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Cross-Origin-Opener-Policy: same-origin
+  # No external scripts, styles or fonts, and 'wasm-unsafe-eval' is required to
+  # instantiate the Rust engine's WASM module. ONNX Runtime's .mjs/.wasm are
+  # bundled same-origin (see ortWasm.ts) — do not allowlist cdn.jsdelivr.net.
+  #
+  # `connect-src` allowlists:
+  # (1) 'self' — the hosted assistant posts to /api/agent on this Worker;
+  # (2) well-known LLM hosts — optional BYOK / local mock still talks to them
+  #     directly when the user fills in Model settings;
+  # (3) Hugging Face — on-device Florence-2 weights when /models is missing
+  #     (Worker static assets cannot ship the ONNX files — 25 MiB per-file limit).
+  # Full-resolution pixels stay on device; each assistant turn may include a
+  # downscaled JPEG preview. HF LFS/ONNX redirects to nested hosts like
+  # us.aws.cdn.hf.co; CSP `*.hf.co` only matches one label, so deeper CDN
+  # patterns are listed explicitly.
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' https://api.openai.com https://openrouter.ai https://api.groq.com https://api.together.xyz https://api.deepseek.com https://api.mistral.ai https://huggingface.co https://*.huggingface.co https://hf.co https://*.hf.co https://*.cdn.hf.co https://*.aws.cdn.hf.co https://*.xethub.hf.co http://localhost:* http://127.0.0.1:*; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+
+# Vite emits content-hashed filenames here, so they can never go stale.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The HTML shell must be revalidated so a new deploy is picked up immediately.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache

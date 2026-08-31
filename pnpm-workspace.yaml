@@ -1,0 +1,6 @@
+packages:
+  - shared
+  - ai
+  - web
+  - mobile
+  - mobile/modules/*

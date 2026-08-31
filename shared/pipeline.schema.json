@@ -1,0 +1,743 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pixelcam.ai/pipeline.schema.json",
+  "title": "PixlPal Pipeline",
+  "description": "A declarative, ordered list of image operations. Versions 1 and 2. Version 2 adds optional masks for local edits. This document is the contract between every pipeline producer (manual UI controls, AI, saved presets) and the Rust engine.",
+  "type": "object",
+  "required": [
+    "version",
+    "operations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/operation"
+      }
+    },
+    "masks": {
+      "type": "array",
+      "description": "Host-resolved mask declarations. The engine ignores source/prompt and only uses bitmaps keyed by id.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "feather": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.02
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "unipolar": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "bipolar": {
+      "type": "number",
+      "minimum": -1,
+      "maximum": 1
+    },
+    "operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "exposure"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Brightness in stops; -1..1 maps to ±2.5 EV. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "contrast"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Tone expansion around middle gray. Positive punchier, negative flatter. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "shadows_highlights"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "shadows": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Open or darken shadows; -1..1 maps to ±2 EV in the darks. Default 0.",
+                  "default": 0
+                },
+                "highlights": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Brighten or recover highlights; -1..1 maps to ±2 EV in the brights. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "tone_curve"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preset": {
+                  "type": "string",
+                  "enum": [
+                    "linear",
+                    "soft",
+                    "hard",
+                    "film"
+                  ],
+                  "description": "Named curve. soft = gentle S, hard = punchy S, film = faded blacks + rolled highlights.",
+                  "default": "soft"
+                },
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      }
+                    ],
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "minItems": 2,
+                  "description": "Optional explicit [x, y] control points; overrides preset."
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "lift_blacks"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Raises the black point for a faded matte look. 1.0 lifts pure black to ~18% gray. Default 0.5.",
+                  "default": 0.5
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "dodge_burn"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Positive dodges (lightens), negative burns (darkens); ±1 maps to ±1.5 stops gated by range. Default 0.",
+                  "default": 0
+                },
+                "range": {
+                  "type": "string",
+                  "enum": [
+                    "shadows",
+                    "midtones",
+                    "highlights"
+                  ],
+                  "description": "Tonal band to emphasize. Default midtones.",
+                  "default": "midtones"
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "saturation"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "-1 fully desaturates, +1 doubles saturation. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "color_balance"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "temperature": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Positive warms (orange), negative cools (blue). Default 0.",
+                  "default": 0
+                },
+                "tint": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Positive shifts magenta, negative shifts green. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "color_shift"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "hue": {
+                  "$ref": "#/$defs/bipolar",
+                  "description": "Hue rotation; -1..1 maps to ±180 degrees. Default 0.",
+                  "default": 0
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "grain"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Film grain intensity, strongest in midtones. Default 0.5.",
+                  "default": 0.5
+                },
+                "size": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 4,
+                  "description": "Grain clump size; 1.0 is fine grain, 4.0 is chunky. Default 1.0.",
+                  "default": 1
+                },
+                "seed": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Noise seed; same seed always yields the same grain. Default 7.",
+                  "default": 7
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "film_softness"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Diffusion blend; softens micro-contrast while keeping detail. Default 0.5.",
+                  "default": 0.5
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "vignette"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Corner darkening strength. Default 0.5.",
+                  "default": 0.5
+                },
+                "size": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Size of the untouched center; larger is subtler. Default 0.5.",
+                  "default": 0.5
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "bloom"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "strength": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Glow intensity around bright areas. Default 0.5.",
+                  "default": 0.5
+                },
+                "threshold": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Luminance above which pixels bloom. Default 0.65.",
+                  "default": 0.65
+                },
+                "radius": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Glow spread; 1.0 is ~8% of the image's smaller side. Default 0.5.",
+                  "default": 0.5
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "halation"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "strength": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Red-orange film halo intensity around highlights. Default 0.4.",
+                  "default": 0.4
+                },
+                "threshold": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Luminance above which highlights halate. Default 0.75.",
+                  "default": 0.75
+                },
+                "radius": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Halo spread; 1.0 is ~6% of the image's smaller side. Default 0.4.",
+                  "default": 0.4
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op"
+          ],
+          "properties": {
+            "op": {
+              "const": "lens_blur"
+            },
+            "params": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "radius": {
+                  "$ref": "#/$defs/unipolar",
+                  "description": "Gaussian defocus; 1.0 is ~5% of the image's smaller side. Default 0.3.",
+                  "default": 0.3
+                }
+              }
+            },
+            "mask": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of a mask in the host-supplied mask map. When set, the op is blended by that mask."
+            },
+            "invertMask": {
+              "type": "boolean",
+              "description": "When true, apply the op where the mask is low (1 - mask)."
+            },
+            "maskStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0..1 scale on the mask before invertMask. Default 1. Requires mask.",
+              "default": 1
+            }
+          }
+        }
+      ]
+    }
+  }
+}

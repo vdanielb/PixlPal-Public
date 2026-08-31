@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "PixlPal",
+    "slug": "pixelcam-ai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0d0e12",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.pixelcam.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "PixlPal needs access to your photos so you can edit them.",
+        "NSPhotoLibraryAddUsageDescription": "PixlPal saves your edited photos to your library."
+      }
+    },
+    "android": {
+      "package": "ai.pixelcam.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0d0e12",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-image-picker",
+      "expo-media-library"
+    ]
+  }
+}
