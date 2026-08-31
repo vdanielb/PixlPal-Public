@@ -2,7 +2,7 @@
 
 ## Cursor Cloud specific instructions
 
-PixlPal (formerly PixelCamAI) is a **fully client-side** monorepo (no backend, no database, no network services). It has a Rust image engine (`engine/`) consumed by a React + Vite **web** app (`web/`, WASM) and an Expo **mobile** app (`mobile/`, UniFFI turbo module). See `README.md` for architecture and the full command list.
+PixlPal (formerly PixelCamAI) is a **fully client-side** monorepo (no backend, no database, no network services). It has a Rust image engine (`engine/`) consumed by a React + Vite **web** app (`web/`, WASM). See `README.md` for architecture and the full command list.
 
 ### Toolchain caveats (already applied in the VM snapshot)
 - **Rust must be ≥ 1.85.** A transitive dependency (`moxcms`) requires edition 2024, so the older default (1.83) fails `pnpm build:wasm`/`pnpm test:engine`. The snapshot's default `rustup` toolchain has been updated to current `stable`.
@@ -17,6 +17,3 @@ PixlPal (formerly PixelCamAI) is a **fully client-side** monorepo (no backend, n
 
 ### Engine
 - Tests: `pnpm test:engine` (`cargo test`, ~38 tests).
-
-### Mobile
-- The Expo app needs native toolchains (Xcode for iOS, or Android SDK + NDK + `cargo-ndk`) and a development build; it **cannot run in this headless cloud VM**. Binding-only regeneration (`pnpm --filter react-native-pixelcam-engine ubrn:bindings`) does not need a mobile toolchain.

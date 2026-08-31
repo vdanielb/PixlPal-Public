@@ -5,11 +5,10 @@ Lovable for photo editing. AI never generates the photo — it helps you apply f
 Every edit — whether it comes from a slider or an AI prompt — is a **declarative pipeline of pixel operations** executed by a single Rust engine. The AI's only job is to operate the controls; pixels are always processed deterministically, on-device.
 
 ```text
-        React Native app          React + Vite web app
-              │                           │
-        JSI turbo module             WebAssembly
-        (uniffi-bindgen-rn)          (wasm-bindgen)
-              └────────────┬──────────────┘
+                  React + Vite web app
+                           │
+                      WebAssembly
+                     (wasm-bindgen)
                            │
                   Rust engine (engine/core)
                   process(image, pipeline)
@@ -21,16 +20,13 @@ Every edit — whether it comes from a slider or an AI prompt — is a **declara
 | --- | --- |
 | `engine/core` | Platform-agnostic Rust engine: pipeline parser + 13 pixel operations |
 | `engine/wasm` | `wasm-bindgen` wrapper for the web |
-| `engine/ffi` | UniFFI wrapper for the React Native turbo module |
 | `shared/` | Pipeline JSON Schema, TypeScript types, operation metadata |
 | `ai/` | The editing agent: tool schemas, the validating tool executor, the agent loop |
 | `web/` | React + Vite editor (WASM engine in a Web Worker) |
-| `mobile/` | Expo React Native app |
-| `mobile/modules/react-native-pixelcam-engine` | Generated turbo module wrapping the engine |
 
 ## The pipeline format
 
-The contract between every frontend and the engine (see [`shared/pipeline.schema.json`](shared/pipeline.schema.json)):
+The contract between the editor and the engine (see [`shared/pipeline.schema.json`](shared/pipeline.schema.json)):
 
 ```json
 {
@@ -43,7 +39,7 @@ The contract between every frontend and the engine (see [`shared/pipeline.schema
 }
 ```
 
-Operations: `exposure`, `contrast`, `tone_curve`, `lift_blacks`, `saturation`, `color_balance`, `color_shift`, `grain`, `film_softness`, `vignette`, `bloom`, `halation`, `lens_blur`. All parameters are normalized (0..1, or -1..1 for bipolar), spatial parameters scale with image size so previews match exports, and grain is deterministic (seeded hash noise) across platforms.
+Operations: `exposure`, `contrast`, `tone_curve`, `lift_blacks`, `saturation`, `color_balance`, `color_shift`, `grain`, `film_softness`, `vignette`, `bloom`, `halation`, `lens_blur`. All parameters are normalized (0..1, or -1..1 for bipolar), spatial parameters scale with image size so previews match exports, and grain is deterministic (seeded hash noise).
 
 ## Getting started
 
@@ -85,65 +81,10 @@ pnpm mock:llm
 
 It speaks both wire protocols and returns keyword-matched tool calls, so everything below the network boundary behaves exactly as it does against a real model.
 
-#### Deploying the web app
-
-The build ships static assets plus a Worker entrypoint ([`web/worker/index.ts`](web/worker/index.ts)) that serves `/api/agent` and `/api/agent/quota`. Configuration lives in [`web/wrangler.jsonc`](web/wrangler.jsonc); [`web/public/_headers`](web/public/_headers) sets immutable caching for the content-hashed assets and a strict Content-Security-Policy. Hosted chat uses `connect-src 'self'`; optional BYOK still allowlists well-known model hosts.
-
-Before the first deploy, put your OpenAI (or compatible) key in a Worker secret:
-
-```bash
-cd web && pnpm exec wrangler secret put OPENAI_API_KEY
-```
-
-Optional vars in `wrangler.jsonc`: `LLM_BASE_URL`, `LLM_MODEL`, `CHAT_LIMIT` (default `3`), `MAX_USER_MESSAGE_CHARS` (default `1000`), `MAX_OUTPUT_TOKENS` (default `4096`), `AGENT_COMPLETION_TIMEOUT_MS` (default `90000`, hang guard only).
-
-```bash
-pnpm --filter @pixelcam/web cf:check     # build + validate the config, no upload
-pnpm --filter @pixelcam/web cf:preview   # serve dist/ on the real Workers runtime
-pnpm deploy:web                          # rebuild the WASM engine, then deploy
-
-# no Cloudflare account handy? deploy to a throwaway preview account:
-cd web && pnpm build && npx wrangler deploy --temporary
-```
-
-Deploying needs a Cloudflare API token with the **Edit Cloudflare Workers** permission. Locally, run `pnpm --filter @pixelcam/web exec wrangler login`, or set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Pushes to `main` that touch the web app, the shared package, or the engine deploy automatically via [`.github/workflows/deploy-web.yml`](.github/workflows/deploy-web.yml), which reads those two values from repository secrets. Add `OPENAI_API_KEY` as a Cloudflare Worker secret (dashboard or `wrangler secret put`) so production deploys can serve the hosted assistant.
-
-### Mobile
-
-The mobile app ([`mobile/`](mobile/)) is an Expo app using a native turbo module ([`mobile/modules/react-native-pixelcam-engine`](mobile/modules/react-native-pixelcam-engine)) whose TypeScript/C++/Kotlin/Obj-C glue is generated from the Rust crate by [`uniffi-bindgen-react-native`](https://github.com/jhugman/uniffi-bindgen-react-native). Because it contains native code it will not run in Expo Go — use a development build:
-
-```bash
-# one-time native prerequisites: Xcode (iOS) or Android SDK + NDK + cargo-ndk,
-# plus the Rust targets, e.g.:
-#   rustup target add aarch64-apple-ios aarch64-apple-ios-sim   # iOS
-#   rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-
-# build the Rust library for the platform and regenerate bindings:
-pnpm --filter react-native-pixelcam-engine ubrn:ios       # or ubrn:android
-
-# then run the app:
-cd mobile
-pnpm ios        # or: pnpm android
-```
-
-After changing the engine's public API (`engine/ffi/src/lib.rs`), regenerate the TypeScript/C++ bindings without any mobile toolchain:
-
-```bash
-pnpm --filter react-native-pixelcam-engine ubrn:bindings
-```
-
 ## Design principles
-
+Decoupled.
 - **One engine** (Rust), knowing nothing about UIs, platforms, or AI.
 - **One pipeline format** (versioned JSON) shared by the sliders and the AI.
-- **Multiple frontends** consuming the same engine API through generated bindings.
+- **The web app** consumes the engine through generated WASM bindings.
 - **AI turns the knobs, it does not paint pixels.** The agent has no path to the image except the operations the UI already exposes.
 - **The agent is transport-free.** [`ai/`](ai/) knows nothing about HTTP; a one-method `ChatModel` is the only seam. The web app defaults to a hosted Worker transport and can still use BYOK.
-
-## Roadmap
-
-See [PLAN.md](PLAN.md) for the full plan.
-
-- Phase 5 — AI editing: **shipped for whole-image edits** on the web, including a hosted `/api/agent` Worker with an anonymous 3-chat limit (optional BYOK remains for local/dev).
-- Phase 6 — Segmentation & local edits: **in progress on web** — Florence-2 Segmenter + engine mask blending + agent `segment` tool; mobile Segmenter still open.
-- Phase 7 — GPU backends (wgpu: Metal/Vulkan/WebGPU) behind the same operation API.

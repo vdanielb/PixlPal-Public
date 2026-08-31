@@ -2,7 +2,7 @@
   "name": "@pixelcam/shared",
   "version": "0.1.0",
   "private": true,
-  "description": "Pipeline schema, TypeScript types, operation metadata, and built-in presets shared by every PixlPal frontend.",
+  "description": "Pipeline schema, TypeScript types, operation metadata, and built-in presets for the PixlPal editor.",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "exports": {

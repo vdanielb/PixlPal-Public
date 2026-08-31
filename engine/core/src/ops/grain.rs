@@ -1,8 +1,7 @@
 //! Grain: deterministic film-style luminance noise.
 //!
 //! Noise is generated from an integer hash (no RNG dependency), so the same
-//! seed always produces the same grain on every platform — a preview on web
-//! matches the export on mobile. `size` controls grain clump size via
+//! seed always produces the same grain. `size` controls grain clump size via
 //! bilinearly-interpolated value noise. Grain is strongest in midtones,
 //! like silver-halide film.
 

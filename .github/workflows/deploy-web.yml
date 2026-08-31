@@ -44,8 +44,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The engine is the source of truth for both frontends, so a deploy that
-      # ships broken pixel operations should fail here rather than in a browser.
+      # The engine is the source of truth for pixel ops, so a deploy that
+      # ships a broken engine should fail here rather than in a browser.
       - run: pnpm test:engine
 
       - run: pnpm build:wasm

@@ -1,7 +1,7 @@
 /**
- * Operation metadata: the single source of truth that both the web and
- * mobile editors use to render their controls. Adding an op to the engine
- * plus an entry here makes it appear in every frontend.
+ * Operation metadata: the single source of truth the editor uses to render
+ * its controls. Adding an op to the engine plus an entry here makes it
+ * appear in the UI.
  */
 
 import type { OpName } from "./types";

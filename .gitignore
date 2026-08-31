@@ -9,15 +9,6 @@ dist/
 # Generated WASM package (rebuild with `pnpm build:wasm`)
 web/src/engine/
 
-# Expo / React Native (app prebuild output; the turbo module's android/ and
-# ios/ dirs under mobile/modules/ are generated glue and ARE committed)
-mobile/.expo/
-mobile/ios/
-mobile/android/
-mobile/modules/*/ios/build/
-mobile/modules/*/android/build/
-mobile/modules/*/rust_modules/
-
 # Cloudflare / Wrangler
 .wrangler/
 .dev.vars*

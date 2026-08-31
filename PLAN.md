@@ -20,7 +20,7 @@ Lovable for photo editing. AI never generates the photo — it orchestrates tool
 
 - One image-processing engine (Rust). It only transforms pixels — it knows nothing about UIs, platforms, AI, or ML models.
 - One pipeline format (versioned JSON) produced by sliders, presets, and AI alike.
-- Multiple frontends (web, mobile) consuming the same engine API. (Desktop is deliberately out of scope for now; the engine and pipeline format already support adding it later.)
+- One frontend (web) consuming the same engine API. (Desktop and mobile are out of scope for this public snapshot; the engine and pipeline format already support adding them later.)
 - AI generates pipelines — never pixels. Segmentation models generate masks — never edits.
 - Every filter is modular and composable.
 
@@ -58,11 +58,9 @@ Presets are just saved pipelines ([`shared/src/presets.ts`](shared/src/presets.t
 
 13 independent ops in [`engine/core/src/ops`](engine/core/src/ops): exposure, contrast, tone_curve, lift_blacks, saturation, color_balance, color_shift, grain, film_softness, vignette, bloom, halation, lens_blur. Deterministic seeded grain; spatial parameters are resolution-independent so previews match exports.
 
-## Phase 4 — Mobile app ✅ DONE
+## Phase 4 — Mobile app — omitted from this public snapshot
 
-Expo app at [`mobile/`](mobile) with a turbo module ([`mobile/modules/react-native-pixelcam-engine`](mobile/modules/react-native-pixelcam-engine)) generated from the UniFFI-annotated [`engine/ffi`](engine/ffi) crate by `uniffi-bindgen-react-native`. Photo picker, live preview, presets, sliders, save/share.
-
-Follow-up: make the UniFFI functions async so full-resolution processing doesn't block the JS thread.
+The private PixelCamAI repo shipped an Expo app with a UniFFI turbo module. This public competition snapshot is web-only.
 
 ## Web ✅ DONE (pulled forward from the original plan's web phase)
 
@@ -124,9 +122,9 @@ The `masks` declarations are resolved by the **host app** (it runs the segmentat
 
 ### Segmentation model: on-device first
 
-Priority is lightweight, small models that run on both web and mobile — private by default, no upload, no inference cost. The photo continues to never leave the device.
+Priority is lightweight, small models that run on the web — private by default, no upload, no inference cost. The photo continues to never leave the device.
 
-- Runtimes: ONNX Runtime Web (WASM, WebGPU where available) inside the existing web worker; ONNX Runtime for React Native (or ExecuTorch) on mobile. One quantized ONNX model artifact shared by both platforms.
+- Runtime: ONNX Runtime Web (WASM, WebGPU where available) inside the existing web worker.
 - Model candidates, smallest-first:
   - Class-specific parsing for the common cases (person, clothing, sky, background): SegFormer-B0-class models fine-tuned for clothes/human parsing or U²-Net-lite portrait matting — quantized to roughly 5–20 MB, well within web budgets. "Dress" is a clothing-parsing class, so the flagship example needs no giant open-vocabulary model.
   - Promptable segmentation for everything else: MobileSAM / EfficientSAM-class encoders (quantized, tens of MB) with point/box prompts; the orchestrator (or a tap from the user) supplies the prompt point.

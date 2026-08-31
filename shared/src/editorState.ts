@@ -1,9 +1,8 @@
 /**
- * Editor state model shared by every frontend. The editor keeps a map of
- * active operations and their parameter values; the declarative pipeline is
- * derived from it in the canonical order defined by OPERATION_DEFS.
- * Presets, manual edits, and AI output all flow through this one
- * representation.
+ * Editor state model. The editor keeps a map of active operations and their
+ * parameter values; the declarative pipeline is derived from it in the
+ * canonical order defined by OPERATION_DEFS. Presets, manual edits, and AI
+ * output all flow through this one representation.
  */
 
 import { OPERATION_DEFS } from "./operations";

@@ -1,4 +1,4 @@
-// Re-exported from the shared package so web and mobile use the exact same
+// Re-exported from the shared package so the editor uses the shared
 // editor-state model.
 export {
   mergeOpStateForMask,

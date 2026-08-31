@@ -110,8 +110,7 @@ pub fn process_with_masks(
 }
 
 /// Process a raw RGBA8 buffer in place-ish (returns the processed copy).
-/// This is the fast path for canvas `ImageData` on the web and pixel buffers
-/// on mobile: no decode/encode round trip.
+/// This is the fast path for canvas `ImageData`: no decode/encode round trip.
 pub fn process_rgba8(
     pixels: &[u8],
     width: u32,
