@@ -38,6 +38,9 @@ import {
   type OpName,
   type OpState,
   type ParamValues,
+  type ParametricMaskSource,
+  type MaskParams,
+  PARAMETRIC_MASK_SOURCES,
 } from "@pixelcam/shared";
 import type { ImageStats, ToolOk, ToolResult, ToolSchema } from "./types";
 
@@ -48,6 +51,7 @@ export const TOOL_NAMES = {
   getImageStats: "get_image_stats",
   segment: "segment",
   invertMask: "invert_mask",
+  createMask: "create_mask",
   setFrame: "set_frame",
 } as const;
 
@@ -59,6 +63,7 @@ export const TOOL_LABELS: Record<string, string> = {
   [TOOL_NAMES.getImageStats]: "Reading the photo",
   [TOOL_NAMES.segment]: "Finding subject",
   [TOOL_NAMES.invertMask]: "Selecting inverse",
+  [TOOL_NAMES.createMask]: "Selecting area",
   [TOOL_NAMES.setFrame]: "Framing",
 };
 
@@ -81,6 +86,23 @@ export type InvertMaskHost = (
   maskId: string,
   signal?: AbortSignal,
 ) => Promise<InvertMaskHostResult>;
+
+export type CreateMaskInput = {
+  type: ParametricMaskSource;
+  id?: string;
+  feather?: number;
+  params: MaskParams;
+  prompt: string;
+};
+
+export type CreateMaskHostResult =
+  | { maskId: string; coverage: number }
+  | { error: string };
+
+export type CreateMaskHost = (
+  input: CreateMaskInput,
+  signal?: AbortSignal,
+) => Promise<CreateMaskHostResult>;
 
 /**
  * Bounding box of a mask, normalized 0..1 in *unrotated* image space.
@@ -137,7 +159,7 @@ export const AGENT_TOOLS: ToolSchema[] = [
       "Turn one or more editing knobs. Parameters you pass are merged into the",
       "current edit, so you can nudge a single value without restating the rest;",
       "omitting `params` entirely enables the operation at its default strength.",
-      "Optional `mask` (from a prior segment or invert_mask call) limits the op",
+      "Optional `mask` (from a prior segment, create_mask, or invert_mask call) limits the op",
       "to that region. Prefer invert_mask when the user wants edits on everything",
       "except a subject; `invertMask: true` on this tool is a quick alternative",
       "that does not create a selectable complement mask.",
@@ -145,7 +167,10 @@ export const AGENT_TOOLS: ToolSchema[] = [
       "changing the op's own amount — use it to dial in local edits.",
       "For local lighten/darken prefer dodge_burn with a range (shadows|midtones|",
       "highlights) plus a mask; prefer shadows_highlights for whole-frame shadow/",
-      "highlight recovery; keep exposure for whole-frame EV.",
+      "highlight recovery; keep exposure for whole-frame EV. Prefer blacks_whites for",
+      "endpoint clip/crush (the black and white points) rather than the broad",
+      "shadows/highlights bands. Prefer hsl_mixer (no mask) for 'make the grass pop'",
+      "and other color-of-things requests.",
       "Operations and their parameter ranges:",
       ...OPERATION_DEFS.map((def) => `- ${def.op} (${def.description}) ${describeOpParams(def)}`),
     ].join(" "),
@@ -166,7 +191,7 @@ export const AGENT_TOOLS: ToolSchema[] = [
               },
               mask: {
                 type: "string",
-                description: "Mask id returned by segment or invert_mask.",
+                description: "Mask id returned by segment, create_mask, or invert_mask.",
               },
               invertMask: {
                 type: "boolean",
@@ -217,7 +242,9 @@ export const AGENT_TOOLS: ToolSchema[] = [
     name: TOOL_NAMES.segment,
     description: [
       "Find a subject in the open photo by referring expression and create a mask.",
-      "Call this before local edits like 'make the dress pop' or 'blur the background'.",
+      "Use this for discrete nameable objects (a dress, a person, a car).",
+      "For tonal or positional areas (bright sky, the top of the frame) prefer create_mask.",
+      "For 'make the grass pop' prefer hsl_mixer, not segmentation.",
       "Returns a maskId you then pass to set_operations via `mask`, or to invert_mask",
       "to select everything else. Runs fully on-device; no pixels leave the device.",
       "If segmentation fails, fall back to a global edit and say so.",
@@ -320,6 +347,82 @@ export const AGENT_TOOLS: ToolSchema[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: TOOL_NAMES.createMask,
+    description: [
+      "Create an engine-computed area mask without running segmentation.",
+      "Use luminance_range for tonal areas ('the bright sky', 'crushed shadows').",
+      "Use linear_gradient or radial_gradient for positional areas ('the top of the",
+      "image', 'the corners', 'the center'). Use color_range when a non-color op",
+      "must hit a hue ('sharpen just the greens'); for 'make the grass pop' prefer",
+      "hsl_mixer with no mask instead.",
+      "Returns a maskId for set_operations / invert_mask. Evaluated on the original",
+      "photo, so it stays put as other sliders move.",
+    ].join(" "),
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          enum: [...PARAMETRIC_MASK_SOURCES],
+          description:
+            "luminance_range, color_range, linear_gradient, or radial_gradient.",
+        },
+        id: {
+          type: "string",
+          description: "Optional mask id. Defaults to luma, color, gradient, or radial.",
+        },
+        feather: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "Edge softness as a fraction of the shorter side. Default 0.02.",
+        },
+        min: {
+          type: "number",
+          description: "luminance_range: luma floor 0..1. Default 0.",
+        },
+        max: {
+          type: "number",
+          description: "luminance_range: luma ceiling 0..1. Default 1.",
+        },
+        softness: {
+          type: "number",
+          description: "Falloff 0..1 for luminance_range, color_range, and radial_gradient.",
+        },
+        hue: {
+          type: "number",
+          description: "color_range: target hue in degrees 0..360.",
+        },
+        range: {
+          type: "number",
+          description: "color_range: full-inclusion half-width in degrees. Default 25.",
+        },
+        satMin: {
+          type: "number",
+          description: "color_range: exclude pixels below this saturation. Default 0.08.",
+        },
+        lumMin: {
+          type: "number",
+          description: "color_range: luminance floor 0..1. Default 0.",
+        },
+        lumMax: {
+          type: "number",
+          description: "color_range: luminance ceiling 0..1. Default 1.",
+        },
+        x0: { type: "number", description: "linear_gradient: start X 0..1. 1.0 at start." },
+        y0: { type: "number", description: "linear_gradient: start Y 0..1 (0 is the top)." },
+        x1: { type: "number", description: "linear_gradient: end X 0..1. 0.0 at end." },
+        y1: { type: "number", description: "linear_gradient: end Y 0..1." },
+        cx: { type: "number", description: "radial_gradient: center X 0..1. Default 0.5." },
+        cy: { type: "number", description: "radial_gradient: center Y 0..1. Default 0.5." },
+        radiusX: { type: "number", description: "radial_gradient: X radius 0..1. Default 0.4." },
+        radiusY: { type: "number", description: "radial_gradient: Y radius 0..1. Default 0.4." },
+      },
+      required: ["type"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 export interface ToolContext {
@@ -329,6 +432,8 @@ export interface ToolContext {
   segment?: SegmentHost;
   /** Host-provided mask invert. Required for the invert_mask tool. */
   invertMask?: InvertMaskHost;
+  /** Host-provided parametric mask. Required for the create_mask tool. */
+  createMask?: CreateMaskHost;
   /** Host-provided mask bounding box. Required for subject-centered crops. */
   getMaskBounds?: MaskBoundsHost;
   signal?: AbortSignal;
@@ -507,6 +612,8 @@ export async function executeTool(
       return segment(args, ctx);
     case TOOL_NAMES.invertMask:
       return invertMask(args, ctx);
+    case TOOL_NAMES.createMask:
+      return createMask(args, ctx);
     case TOOL_NAMES.setFrame:
       return setFrame(args, ctx);
     default:
@@ -877,6 +984,184 @@ async function invertMask(args: Record<string, unknown>, ctx: ToolContext): Prom
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return fail(ctx, "mask invert was cancelled.");
+    }
+    return fail(ctx, error instanceof Error ? error.message : String(error));
+  }
+}
+
+const DEFAULT_MASK_IDS: Record<ParametricMaskSource, string> = {
+  luminance_range: "luma",
+  color_range: "color",
+  linear_gradient: "gradient",
+  radial_gradient: "radial",
+};
+
+function coerceNumber(
+  raw: unknown,
+  name: string,
+  min: number,
+  max: number,
+): { value: number } | { error: string } {
+  const numeric =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string" && raw.trim() !== ""
+        ? Number(raw)
+        : Number.NaN;
+  if (!Number.isFinite(numeric)) {
+    return { error: `"${name}" must be a number between ${min} and ${max}.` };
+  }
+  return { value: Math.min(max, Math.max(min, numeric)) };
+}
+
+function optionalNumber(
+  raw: unknown,
+  name: string,
+  min: number,
+  max: number,
+  fallback: number,
+): { value: number } | { error: string } {
+  if (raw === undefined || raw === null) return { value: fallback };
+  return coerceNumber(raw, name, min, max);
+}
+
+function describeParametric(type: ParametricMaskSource, params: MaskParams): string {
+  if (type === "luminance_range") {
+    const p = params as { min?: number; max?: number };
+    return `luminance ${(p.min ?? 0).toFixed(2)}–${(p.max ?? 1).toFixed(2)}`;
+  }
+  if (type === "color_range") {
+    const p = params as { hue?: number };
+    return `hue ${Math.round(p.hue ?? 0)}°`;
+  }
+  if (type === "linear_gradient") return "linear gradient";
+  return "radial gradient";
+}
+
+async function createMask(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  if (!ctx.createMask) {
+    return fail(ctx, "parametric masks are not available in this editor session.");
+  }
+  const type = args.type;
+  if (typeof type !== "string" || !(PARAMETRIC_MASK_SOURCES as readonly string[]).includes(type)) {
+    return fail(
+      ctx,
+      `"type" must be one of: ${PARAMETRIC_MASK_SOURCES.join(", ")}.`,
+    );
+  }
+  const source = type as ParametricMaskSource;
+
+  let id: string | undefined;
+  if (args.id !== undefined) {
+    if (typeof args.id !== "string" || args.id.trim() === "") {
+      return fail(ctx, '"id" must be a non-empty string.');
+    }
+    id = args.id.trim();
+  }
+
+  let feather: number | undefined;
+  if (args.feather !== undefined) {
+    const parsed = coerceNumber(args.feather, "feather", 0, 1);
+    if ("error" in parsed) return fail(ctx, parsed.error);
+    feather = parsed.value;
+  }
+
+  let params: MaskParams;
+  switch (source) {
+    case "luminance_range": {
+      const min = optionalNumber(args.min, "min", 0, 1, 0);
+      if ("error" in min) return fail(ctx, min.error);
+      const max = optionalNumber(args.max, "max", 0, 1, 1);
+      if ("error" in max) return fail(ctx, max.error);
+      const softness = optionalNumber(args.softness, "softness", 0, 1, 0.1);
+      if ("error" in softness) return fail(ctx, softness.error);
+      const lo = Math.min(min.value, max.value);
+      const hi = Math.max(min.value, max.value);
+      params = { min: lo, max: hi, softness: softness.value };
+      break;
+    }
+    case "color_range": {
+      if (args.hue === undefined) {
+        return fail(ctx, '"hue" (0..360) is required for color_range.');
+      }
+      const hue = coerceNumber(args.hue, "hue", 0, 360);
+      if ("error" in hue) return fail(ctx, hue.error);
+      const range = optionalNumber(args.range, "range", 0.5, 180, 25);
+      if ("error" in range) return fail(ctx, range.error);
+      const softness = optionalNumber(args.softness, "softness", 0, 2, 0.4);
+      if ("error" in softness) return fail(ctx, softness.error);
+      const satMin = optionalNumber(args.satMin, "satMin", 0, 1, 0.08);
+      if ("error" in satMin) return fail(ctx, satMin.error);
+      const lumMin = optionalNumber(args.lumMin, "lumMin", 0, 1, 0);
+      if ("error" in lumMin) return fail(ctx, lumMin.error);
+      const lumMax = optionalNumber(args.lumMax, "lumMax", 0, 1, 1);
+      if ("error" in lumMax) return fail(ctx, lumMax.error);
+      params = {
+        hue: hue.value,
+        range: range.value,
+        softness: softness.value,
+        satMin: satMin.value,
+        lumMin: lumMin.value,
+        lumMax: Math.max(lumMin.value, lumMax.value),
+      };
+      break;
+    }
+    case "linear_gradient": {
+      const x0 = optionalNumber(args.x0, "x0", 0, 1, 0.5);
+      if ("error" in x0) return fail(ctx, x0.error);
+      const y0 = optionalNumber(args.y0, "y0", 0, 1, 0);
+      if ("error" in y0) return fail(ctx, y0.error);
+      const x1 = optionalNumber(args.x1, "x1", 0, 1, 0.5);
+      if ("error" in x1) return fail(ctx, x1.error);
+      const y1 = optionalNumber(args.y1, "y1", 0, 1, 1);
+      if ("error" in y1) return fail(ctx, y1.error);
+      params = { x0: x0.value, y0: y0.value, x1: x1.value, y1: y1.value };
+      break;
+    }
+    case "radial_gradient": {
+      const cx = optionalNumber(args.cx, "cx", 0, 1, 0.5);
+      if ("error" in cx) return fail(ctx, cx.error);
+      const cy = optionalNumber(args.cy, "cy", 0, 1, 0.5);
+      if ("error" in cy) return fail(ctx, cy.error);
+      const radiusX = optionalNumber(args.radiusX, "radiusX", 0.01, 1, 0.4);
+      if ("error" in radiusX) return fail(ctx, radiusX.error);
+      const radiusY = optionalNumber(args.radiusY, "radiusY", 0.01, 1, radiusX.value);
+      if ("error" in radiusY) return fail(ctx, radiusY.error);
+      const softness = optionalNumber(args.softness, "softness", 0, 1, 0.3);
+      if ("error" in softness) return fail(ctx, softness.error);
+      params = {
+        cx: cx.value,
+        cy: cy.value,
+        radiusX: radiusX.value,
+        radiusY: radiusY.value,
+        softness: softness.value,
+      };
+      break;
+    }
+  }
+
+  const prompt = describeParametric(source, params);
+  try {
+    const result = await ctx.createMask(
+      {
+        type: source,
+        id: id ?? DEFAULT_MASK_IDS[source],
+        ...(feather !== undefined ? { feather } : {}),
+        params,
+        prompt,
+      },
+      ctx.signal,
+    );
+    if ("error" in result) return fail(ctx, result.error);
+    const pct = (result.coverage * 100).toFixed(1);
+    return unchanged(ctx, {
+      ok: true,
+      summary: `Created ${source} mask "${result.maskId}" (${prompt}, covers ~${pct}% of the frame).`,
+      data: { maskId: result.maskId, coverage: result.coverage, source, params },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return fail(ctx, "mask creation was cancelled.");
     }
     return fail(ctx, error instanceof Error ? error.message : String(error));
   }

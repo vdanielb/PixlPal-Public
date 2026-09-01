@@ -5,6 +5,7 @@
  */
 
 import type { OpName } from "./types";
+import { HSL_BANDS } from "./types";
 
 export type OpCategory = "tonal" | "color" | "texture" | "optical";
 
@@ -97,11 +98,15 @@ export const OPERATION_DEFS: readonly OperationDef[] = [
     },
   },
   {
-    op: "lift_blacks",
-    label: "Lift Blacks",
+    op: "blacks_whites",
+    label: "Blacks / Whites",
     category: "tonal",
-    description: "Raises the black point for a faded, matte film look.",
-    params: { amount: unipolar("Amount", 0.5) },
+    description:
+      "Moves the black and white points. Negative blacks crush shadows; positive lifts them. Positive whites stretch brights and can clip; negative pulls the white point in. Prefer over shadows_highlights when you want the endpoints, not the broad bands.",
+    params: {
+      blacks: bipolar("Blacks"),
+      whites: bipolar("Whites"),
+    },
   },
   {
     op: "dodge_burn",
@@ -142,6 +147,23 @@ export const OPERATION_DEFS: readonly OperationDef[] = [
     category: "color",
     description: "Rotates every hue around the color wheel.",
     params: { hue: bipolar("Hue") },
+  },
+  {
+    op: "hsl_mixer",
+    label: "HSL Mixer",
+    category: "color",
+    description:
+      "Lightroom-style per-hue hue/saturation/luminance. Prefer for 'make the grass pop' / 'mute the blues' without a mask — near-grays stay untouched.",
+    params: Object.fromEntries(
+      HSL_BANDS.flatMap((band) => {
+        const label = band.charAt(0).toUpperCase() + band.slice(1);
+        return [
+          [`${band}_hue`, bipolar(`${label} Hue`)],
+          [`${band}_sat`, bipolar(`${label} Sat`)],
+          [`${band}_lum`, bipolar(`${label} Lum`)],
+        ];
+      }),
+    ),
   },
   {
     op: "grain",

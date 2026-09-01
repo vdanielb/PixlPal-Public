@@ -177,7 +177,7 @@ describe("tool execution invariants", () => {
           const outcome = await executeTool(name, payload, { opState: before });
           assertValidOpState(outcome.opState);
           const version = opStateToPipeline(outcome.opState).version;
-          expect(version === 1 || version === 2 || version === 3).toBe(true);
+          expect(version === 1 || version === 2 || version === 3 || version === 4).toBe(true);
           if (!outcome.result.ok) {
             expect(outcome.opState).toEqual(before);
           }

@@ -1,3 +1,9 @@
+import {
+  isParametricMaskSource,
+  type MaskDeclaration,
+  type MaskParams,
+  type MaskSourceKind,
+} from "@pixelcam/shared";
 import type { MaskBitmap } from "./types";
 import { maskCoverage, resizeMask } from "./rasterize";
 
@@ -10,6 +16,8 @@ export type StoredMask = {
   segmenterId: string;
   /** When set, this mask is the complement of another stored mask. */
   invertedFrom?: string;
+  source: MaskSourceKind;
+  params?: MaskParams;
 };
 
 /**
@@ -47,6 +55,17 @@ export class MaskStore {
     return [...this.byId.values()];
   }
 
+  /** Pipeline JSON declarations, including parametric sources. */
+  declarations(): MaskDeclaration[] {
+    return this.list().map((m) => ({
+      id: m.id,
+      source: m.source,
+      prompt: m.prompt,
+      feather: m.feather,
+      ...(m.params ? { params: m.params } : {}),
+    }));
+  }
+
   put(input: {
     prompt: string;
     mask: MaskBitmap;
@@ -54,6 +73,8 @@ export class MaskStore {
     feather?: number;
     preferredId?: string;
     invertedFrom?: string;
+    source?: MaskSourceKind;
+    params?: MaskParams;
   }): StoredMask {
     const promptKey = normalizePrompt(input.prompt);
     const existing = this.byPrompt.get(promptKey);
@@ -81,6 +102,10 @@ export class MaskStore {
       feather: input.feather ?? 0.02,
       segmenterId: input.segmenterId,
       ...(input.invertedFrom ? { invertedFrom: input.invertedFrom } : {}),
+      source:
+        input.source ??
+        (input.invertedFrom ? "invert" : "segmentation"),
+      ...(input.params ? { params: input.params } : {}),
     };
     this.byPrompt.set(promptKey, stored);
     this.byId.set(finalId, stored);
@@ -116,9 +141,11 @@ export class MaskStore {
     return { ...stored, sourceMaskId: source.id };
   }
 
-  /** Build the float buffer map the engine worker expects, optionally resized. */
+  /** Build the float buffer map the engine worker expects, optionally resized.
+   * Parametric masks are omitted — the engine generates them from the pipeline JSON.
+   */
   toEngineMasks(width: number, height: number): { ids: string[]; data: Float32Array } {
-    const masks = this.list();
+    const masks = this.list().filter((m) => !isParametricMaskSource(m.source));
     const ids = masks.map((m) => m.id);
     const plane = width * height;
     const data = new Float32Array(ids.length * plane);

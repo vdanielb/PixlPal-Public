@@ -56,7 +56,7 @@ Presets are just saved pipelines ([`shared/src/presets.ts`](shared/src/presets.t
 
 ## Phase 3 — Operations ✅ DONE
 
-13 independent ops in [`engine/core/src/ops`](engine/core/src/ops): exposure, contrast, tone_curve, lift_blacks, saturation, color_balance, color_shift, grain, film_softness, vignette, bloom, halation, lens_blur. Deterministic seeded grain; spatial parameters are resolution-independent so previews match exports.
+Tonal, color, texture and optical ops in [`engine/core/src/ops`](engine/core/src/ops): exposure, contrast, shadows_highlights, tone_curve, blacks_whites, dodge_burn, saturation, color_balance, color_shift, hsl_mixer, grain, film_softness, vignette, bloom, halation, lens_blur. Deterministic seeded grain; spatial parameters are resolution-independent so previews match exports. Parametric masks (luminance/color/gradient) are engine-computed against the input image.
 
 ## Phase 4 — Mobile app — omitted from this public snapshot
 

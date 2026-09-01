@@ -583,3 +583,69 @@ describe("tool schemas", () => {
     expect((invert?.parameters as any).required).toEqual(["maskId"]);
   });
 });
+
+describe("blacks_whites and hsl_mixer", () => {
+  it("clamps blacks_whites sliders", async () => {
+    const outcome = await run(TOOL_NAMES.setOperations, {
+      operations: [{ op: "blacks_whites", params: { blacks: -2, whites: 3 } }],
+    });
+    const result = expectOk(outcome);
+    expect(outcome.opState.blacks_whites).toEqual({ params: { blacks: -1, whites: 1 } });
+    expect(result.warnings?.some((w) => w.includes("blacks"))).toBe(true);
+    expect(result.warnings?.some((w) => w.includes("whites"))).toBe(true);
+  });
+
+  it("accepts a single hsl_mixer band", async () => {
+    const outcome = await run(TOOL_NAMES.setOperations, {
+      operations: [{ op: "hsl_mixer", params: { green_sat: 0.4, green_lum: -0.2 } }],
+    });
+    expectOk(outcome);
+    expect(outcome.opState.hsl_mixer?.params.green_sat).toBe(0.4);
+    expect(outcome.opState.hsl_mixer?.params.green_lum).toBe(-0.2);
+    expect(outcome.opState.hsl_mixer?.params.red_hue).toBe(0);
+  });
+});
+
+describe("create_mask", () => {
+  it("returns a mask id from the host without changing the edit", async () => {
+    const createMask: import("./tools").CreateMaskHost = async (input) => ({
+      maskId: input.id ?? "luma",
+      coverage: 0.22,
+    });
+    const before: OpState = { grain: { params: { amount: 0.4, size: 1 } } };
+    const outcome = await executeTool(
+      TOOL_NAMES.createMask,
+      JSON.stringify({ type: "luminance_range", min: 0.7, max: 1 }),
+      { opState: before, createMask },
+    );
+    const result = expectOk(outcome);
+    expect(result.data?.maskId).toBe("luma");
+    expect(result.summary).toContain("luminance_range");
+    expect(outcome.opState).toEqual(before);
+    expect(outcome.changed).toBe(false);
+  });
+
+  it("requires hue for color_range", async () => {
+    const createMask: import("./tools").CreateMaskHost = async () => ({
+      maskId: "color",
+      coverage: 0.1,
+    });
+    const outcome = await executeTool(
+      TOOL_NAMES.createMask,
+      JSON.stringify({ type: "color_range" }),
+      { opState: {}, createMask },
+    );
+    expect(expectErr(outcome).error).toContain("hue");
+  });
+
+  it("fails when the host did not inject createMask", async () => {
+    const outcome = await run(TOOL_NAMES.createMask, { type: "linear_gradient" });
+    expect(expectErr(outcome).error).toContain("not available");
+  });
+
+  it("advertises create_mask in AGENT_TOOLS", () => {
+    const tool = AGENT_TOOLS.find((t) => t.name === TOOL_NAMES.createMask);
+    expect(tool).toBeDefined();
+    expect((tool?.parameters as { required?: string[] }).required).toEqual(["type"]);
+  });
+});

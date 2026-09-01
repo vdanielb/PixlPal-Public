@@ -76,6 +76,7 @@ describe("createWebMcpTools", () => {
       TOOL_NAMES.segment,
       TOOL_NAMES.setFrame,
       TOOL_NAMES.invertMask,
+      TOOL_NAMES.createMask,
       WEBMCP_TOOL_NAMES.getEditState,
     ]);
     for (const tool of tools) {
@@ -221,9 +222,9 @@ describe("registerWebMcpTools", () => {
     const result = await registerWebMcpTools(modelContext, makeHost(), {
       signal: controller.signal,
     });
-    expect(result.registered).toHaveLength(8);
+    expect(result.registered).toHaveLength(9);
     expect(result.failed).toHaveLength(0);
-    expect(registered.size).toBe(8);
+    expect(registered.size).toBe(9);
 
     controller.abort();
     expect(registered.size).toBe(0);
@@ -235,6 +236,6 @@ describe("registerWebMcpTools", () => {
     const second = await registerWebMcpTools(modelContext, makeHost());
 
     expect(second.registered).toHaveLength(0);
-    expect(second.failed).toHaveLength(8);
+    expect(second.failed).toHaveLength(9);
   });
 });

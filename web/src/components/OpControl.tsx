@@ -1,5 +1,6 @@
 import type { ActiveOp, OperationDef } from "@pixelcam/shared";
 import type { OpState, ParamValues } from "../lib/pipelineState";
+import { HslMixerControl } from "./HslMixerControl";
 
 /** Default params for an op when it is first activated by a user gesture. */
 function activationDefaults(def: OperationDef): ParamValues {
@@ -63,6 +64,17 @@ export function OpControl({
   };
 
   const strength = current?.maskStrength ?? 1;
+
+  if (def.op === "hsl_mixer") {
+    return (
+      <HslMixerControl
+        def={def}
+        opState={opState}
+        onOpChange={onOpChange}
+        onMaskBadgeClick={onMaskBadgeClick}
+      />
+    );
+  }
 
   return (
     <fieldset className="op" data-active={active || undefined} title={def.description}>

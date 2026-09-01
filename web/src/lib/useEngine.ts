@@ -29,6 +29,8 @@ export interface EngineApi {
     pipelineJson: string,
     masks?: EngineMaskPayload | null,
   ) => Promise<ImageData>;
+  /** Render a parametric mask declaration against the current preview. */
+  renderMask: (declJson: string) => Promise<Float32Array>;
 }
 
 type PendingJob = {
@@ -48,6 +50,9 @@ export function useEngine(): EngineApi {
   const pendingJob = useRef<PendingJob | null>(null);
   const fullRequests = useRef(
     new Map<number, { resolve: (img: ImageData) => void; reject: (err: Error) => void }>(),
+  );
+  const maskRequests = useRef(
+    new Map<number, { resolve: (plane: Float32Array) => void; reject: (err: Error) => void }>(),
   );
 
   useEffect(() => {
@@ -90,12 +95,27 @@ export function useEngine(): EngineApi {
           }
           break;
         }
+        case "maskRendered": {
+          const handler = maskRequests.current.get(msg.requestId);
+          if (handler) {
+            maskRequests.current.delete(msg.requestId);
+            handler.resolve(new Float32Array(msg.data));
+          }
+          break;
+        }
         case "error": {
           if (msg.requestId !== undefined) {
-            const handler = fullRequests.current.get(msg.requestId);
-            if (handler) {
+            const fullHandler = fullRequests.current.get(msg.requestId);
+            if (fullHandler) {
               fullRequests.current.delete(msg.requestId);
-              handler.reject(new Error(msg.message));
+              fullHandler.reject(new Error(msg.message));
+              break;
+            }
+            const maskHandler = maskRequests.current.get(msg.requestId);
+            if (maskHandler) {
+              maskRequests.current.delete(msg.requestId);
+              maskHandler.reject(new Error(msg.message));
+              break;
             }
           } else {
             inFlight.current = null;
@@ -201,5 +221,28 @@ export function useEngine(): EngineApi {
     [],
   );
 
-  return { ready, previewFrame, processing, error, setPreviewImage, requestPreview, processFull };
+  const renderMask = useCallback((declJson: string) => {
+    return new Promise<Float32Array>((resolve, reject) => {
+      const worker = workerRef.current;
+      if (!worker) {
+        reject(new Error("engine worker not running"));
+        return;
+      }
+      const requestId = ++jobCounter.current;
+      maskRequests.current.set(requestId, { resolve, reject });
+      const msg: WorkerRequest = { type: "renderMask", requestId, declJson };
+      worker.postMessage(msg);
+    });
+  }, []);
+
+  return {
+    ready,
+    previewFrame,
+    processing,
+    error,
+    setPreviewImage,
+    requestPreview,
+    processFull,
+    renderMask,
+  };
 }

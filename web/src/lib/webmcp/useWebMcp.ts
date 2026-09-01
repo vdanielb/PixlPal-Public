@@ -46,6 +46,13 @@ export function useWebMcp(host: WebMcpHost): WebMcpStatus {
         }
         return invertMask(maskId, signal);
       },
+      createMask: (input, signal) => {
+        const createMask = hostRef.current.createMask;
+        if (!createMask) {
+          return Promise.resolve({ error: "parametric masks are not available in this session." });
+        }
+        return createMask(input, signal);
+      },
       getMaskBounds: (maskId, signal) => {
         const getMaskBounds = hostRef.current.getMaskBounds;
         if (!getMaskBounds) {

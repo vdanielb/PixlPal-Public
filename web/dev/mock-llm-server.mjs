@@ -74,7 +74,7 @@ const SCRIPTS = [
       [
         setOperations(
           { op: "tone_curve", params: { preset: "film" } },
-          { op: "lift_blacks", params: { amount: 0.32 } },
+          { op: "blacks_whites", params: { blacks: 0.32 } },
           { op: "saturation", params: { amount: -0.35 } },
           { op: "vignette", params: { amount: 0.42, size: 0.45 } },
           { op: "grain", params: { amount: 0.4, size: 1.2 } },
@@ -94,7 +94,7 @@ const SCRIPTS = [
         setOperations(
           { op: "color_balance", params: { temperature: 0.22, tint: 0.1 } },
           { op: "saturation", params: { amount: -0.28 } },
-          { op: "lift_blacks", params: { amount: 0.38 } },
+          { op: "blacks_whites", params: { blacks: 0.38 } },
           { op: "grain", params: { amount: 0.5, size: 1.5 } },
         ),
       ],

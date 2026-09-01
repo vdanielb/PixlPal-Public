@@ -23,6 +23,7 @@ import {
   type InvertMaskHost,
   type MaskBoundsHost,
   type SegmentHost,
+  type CreateMaskHost,
   type ToolContext,
   type ToolResult,
 } from "@pixelcam/ai";
@@ -48,6 +49,7 @@ const TOOL_TITLES: Record<string, string> = {
   [TOOL_NAMES.getImageStats]: "Measure the photo",
   [TOOL_NAMES.segment]: "Select a subject",
   [TOOL_NAMES.invertMask]: "Select everything else",
+  [TOOL_NAMES.createMask]: "Select an area",
   [TOOL_NAMES.setFrame]: "Crop or rotate the photo",
   [WEBMCP_TOOL_NAMES.getEditState]: "Read the current edit",
 };
@@ -89,6 +91,7 @@ export interface WebMcpHost {
   getEditState(): WebMcpEditState;
   segment?: SegmentHost;
   invertMask?: InvertMaskHost;
+  createMask?: CreateMaskHost;
   getMaskBounds?: MaskBoundsHost;
 }
 
@@ -128,7 +131,7 @@ function editStateText(state: WebMcpEditState): string {
       .join("; ");
     lines.push(`Available masks: ${masks}.`);
   } else {
-    lines.push("No masks exist yet; use segment to create one.");
+    lines.push("No masks exist yet; use segment or create_mask to create one.");
   }
   lines.push(`Undo available: ${state.canUndo}. Redo available: ${state.canRedo}.`);
   return lines.join("\n");
@@ -162,6 +165,7 @@ export function createWebMcpTools(host: WebMcpHost): ModelContextTool[] {
           imageStats: host.getImageStats(),
           segment: host.segment,
           invertMask: host.invertMask,
+          createMask: host.createMask,
           getMaskBounds: host.getMaskBounds,
           signal: options?.signal,
         };

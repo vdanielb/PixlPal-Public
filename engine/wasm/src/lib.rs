@@ -99,6 +99,19 @@ pub fn process_encoded(
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Render one parametric mask declaration against the input pixels.
+/// Returns a `width*height` f32 plane (0..1).
+#[wasm_bindgen]
+pub fn render_mask(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    decl_json: &str,
+) -> Result<Vec<f32>, JsError> {
+    pixelcam_engine::render_mask(pixels, width, height, decl_json)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Validate a pipeline JSON document without processing anything.
 /// Returns an error message string, or null when valid.
 #[wasm_bindgen]

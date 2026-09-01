@@ -535,6 +535,56 @@ fieldset.op select {
   grid-column: 2 / 4;
 }
 
+/* HSL mixer: Lightroom-style Hue / Saturation / Luminance families */
+
+nav.hsl-views {
+  margin: 0.15rem 0 0.45rem;
+}
+
+nav.hsl-views menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+nav.hsl-views button {
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+
+nav.hsl-views button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+fieldset.hsl-family {
+  margin: 0.45rem 0 0;
+  padding: 0.4rem 0.55rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+fieldset.hsl-mixer fieldset.hsl-family legend {
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+fieldset.hsl-mixer label.hsl-slider {
+  grid-template-columns: 64px 1fr 42px;
+}
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -567,6 +617,38 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
   background: var(--text);
   border: none;
+}
+
+/* Paint the gradient on the track only. WebKit top-aligns thumbs to the
+   runnable-track, so offset by (track - thumb) / 2 to sit on center. */
+input[type="range"].hsl-track {
+  height: 8px;
+  background: transparent;
+}
+
+input[type="range"].hsl-track::-moz-range-track {
+  height: 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--hsl-track, var(--border-strong));
+}
+
+input[type="range"].hsl-track::-webkit-slider-runnable-track {
+  height: 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--hsl-track, var(--border-strong));
+}
+
+input[type="range"].hsl-track::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -3px;
+}
+
+input[type="range"].hsl-track::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
 }
 
 /* pipeline json */

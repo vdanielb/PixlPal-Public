@@ -18,7 +18,7 @@ Every edit — whether it comes from a slider or an AI prompt — is a **declara
 
 | Path | What it is |
 | --- | --- |
-| `engine/core` | Platform-agnostic Rust engine: pipeline parser + 13 pixel operations |
+| `engine/core` | Platform-agnostic Rust engine: pipeline parser + pixel operations |
 | `engine/wasm` | `wasm-bindgen` wrapper for the web |
 | `shared/` | Pipeline JSON Schema, TypeScript types, operation metadata |
 | `ai/` | The editing agent: tool schemas, the validating tool executor, the agent loop |
@@ -39,9 +39,9 @@ The contract between the editor and the engine (see [`shared/pipeline.schema.jso
 }
 ```
 
-Operations: `exposure`, `contrast`, `tone_curve`, `lift_blacks`, `saturation`, `color_balance`, `color_shift`, `grain`, `film_softness`, `vignette`, `bloom`, `halation`, `lens_blur`. All parameters are normalized (0..1, or -1..1 for bipolar), spatial parameters scale with image size so previews match exports, and grain is deterministic (seeded hash noise).
+Operations: `exposure`, `contrast`, `shadows_highlights`, `tone_curve`, `blacks_whites`, `dodge_burn`, `saturation`, `color_balance`, `color_shift`, `hsl_mixer`, `grain`, `film_softness`, `vignette`, `bloom`, `halation`, `lens_blur`. All parameters are normalized (0..1, or -1..1 for bipolar), spatial parameters scale with image size so previews match exports, and grain is deterministic (seeded hash noise).
 
-Version 2 adds optional per-op masks for local edits. Version 3 adds an optional top-level `frame` — a non-destructive rotate (90° steps) + crop that the engine applies *after* every operation, so ops and masks always work in original image space:
+Version 2 adds optional per-op masks for local edits. Version 3 adds an optional top-level `frame` — a non-destructive rotate (90° steps) + crop that the engine applies *after* every operation, so ops and masks always work in original image space. Version 4 adds engine-computed parametric masks (luminance range, color range, linear/radial gradients) evaluated against the input image:
 
 ```json
 {
@@ -73,7 +73,7 @@ Local segmentation uses a swappable `Segmenter` interface ([`web/src/lib/segment
 
 ### The AI assistant
 
-The assistant does not generate pixels and does not write pipelines behind the editor's back. It operates the same controls the user can drag, through tools defined in [`ai/`](ai/): `set_operations`, `remove_operations`, `reset_edits`, `get_image_stats`, `segment`, `invert_mask`, and `set_frame`. Every change appears on the sliders as it happens, ends up in the undo stack, and shows up in the pipeline JSON panel. For local edits ("make the dress pop"), it calls `segment` with a referring expression; the host runs the Segmenter and returns a `maskId` that later ops can attach via `mask`. For "everything except" edits ("blur the background", de-emphasize surroundings), it calls `invert_mask` on that id to create a selectable complement mask. For reframing ("crop to portrait, centered on the person"), it calls `segment` and then `set_frame` with the subject's mask id and an aspect ratio — the host computes the mask's bounding box and fits the crop around it.
+The assistant does not generate pixels and does not write pipelines behind the editor's back. It operates the same controls the user can drag, through tools defined in [`ai/`](ai/): `set_operations`, `remove_operations`, `reset_edits`, `get_image_stats`, `segment`, `create_mask`, `invert_mask`, and `set_frame`. Every change appears on the sliders as it happens, ends up in the undo stack, and shows up in the pipeline JSON panel. For local edits on a named object ("make the dress pop"), it calls `segment` with a referring expression; the host runs the Segmenter and returns a `maskId` that later ops can attach via `mask`. For tonal or positional areas ("darken the bright top") it calls `create_mask` instead, which asks the engine to compute a luminance-range or gradient mask. For color-of-things requests ("make the grass pop") it prefers the `hsl_mixer` op with no mask. For "everything except" edits ("blur the background", de-emphasize surroundings), it calls `invert_mask` on that id to create a selectable complement mask. For reframing ("crop to portrait, centered on the person"), it calls `segment` and then `set_frame` with the subject's mask id and an aspect ratio — the host computes the mask's bounding box and fits the crop around it.
 
 The tool schemas and the system prompt are generated from [`shared/src/operations.ts`](shared/src/operations.ts), so adding an operation teaches the agent about it for free. Arguments are validated and clamped before they reach the editor: an unknown operation or an out-of-range value comes back to the model as a tool error, which it then corrects. An invalid pipeline never reaches the engine.
 
