@@ -8,8 +8,28 @@ import { describe, expect, it } from "vitest";
 import { OPERATION_DEFS, opStateToPipeline, type OpState } from "@pixelcam/shared";
 import { AGENT_TOOLS, executeTool } from "./tools";
 
+function assertValidFrame(frame: OpState["frame"]): void {
+  if (frame === undefined) return;
+  expect([0, 90, 180, 270, undefined]).toContain(frame.rotate);
+  if (frame.crop !== undefined) {
+    for (const value of [frame.crop.x, frame.crop.y, frame.crop.width, frame.crop.height]) {
+      expect(typeof value).toBe("number");
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+    expect(frame.crop.width).toBeGreaterThan(0);
+    expect(frame.crop.height).toBeGreaterThan(0);
+    expect(frame.crop.x + frame.crop.width).toBeLessThanOrEqual(1.0001);
+    expect(frame.crop.y + frame.crop.height).toBeLessThanOrEqual(1.0001);
+  }
+}
+
 function assertValidOpState(opState: OpState): void {
-  for (const [op, active] of Object.entries(opState)) {
+  assertValidFrame(opState.frame);
+  for (const [op, entry] of Object.entries(opState)) {
+    if (op === "frame") continue;
+    const active = entry as import("@pixelcam/shared").ActiveOp | undefined;
     const def = OPERATION_DEFS.find((candidate) => candidate.op === op);
     expect(def, `pipeline contains unknown operation "${op}"`).toBeDefined();
     expect(active, `"${op}" entry must be defined`).toBeDefined();
@@ -157,7 +177,7 @@ describe("tool execution invariants", () => {
           const outcome = await executeTool(name, payload, { opState: before });
           assertValidOpState(outcome.opState);
           const version = opStateToPipeline(outcome.opState).version;
-          expect(version === 1 || version === 2).toBe(true);
+          expect(version === 1 || version === 2 || version === 3).toBe(true);
           if (!outcome.result.ok) {
             expect(outcome.opState).toEqual(before);
           }

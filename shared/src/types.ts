@@ -1,10 +1,13 @@
 /**
  * TypeScript mirror of `pipeline.schema.json` and the Rust engine's
- * `pipeline.rs`. Versions 1 and 2 (v2 adds optional masks).
+ * `pipeline.rs`. Versions 1..3 (v2 adds optional masks, v3 adds the optional
+ * frame transform: rotate + crop applied after every operation).
  */
 
-export const PIPELINE_VERSION = 2 as const;
-export type PipelineVersion = 1 | 2;
+import type { FrameTransform } from "./frame";
+
+export const PIPELINE_VERSION = 3 as const;
+export type PipelineVersion = 1 | 2 | 3;
 
 export interface ExposureParams {
   /** -1..1 → ±2.5 stops */
@@ -153,6 +156,11 @@ export interface Pipeline {
   version: PipelineVersion;
   masks?: MaskDeclaration[];
   operations: Operation[];
+  /**
+   * Non-destructive rotate + crop, applied by the engine after all
+   * operations. Requires version 3.
+   */
+  frame?: FrameTransform;
 }
 
 export function emptyPipeline(): Pipeline {

@@ -2,8 +2,14 @@ import { useMemo } from "react";
 import {
   CATEGORY_LABELS,
   OPERATION_DEFS,
+  centeredAspectCrop,
+  isNoopFrame,
   mergeOpStateForMask,
+  normalizeFrame,
   projectOpStateForMask,
+  rotateFrame,
+  rotatedSize,
+  type FrameTransform,
   type OpCategory,
   type Pipeline,
 } from "@pixelcam/shared";
@@ -12,6 +18,14 @@ import { OpControl } from "./OpControl";
 import { PipelineJson } from "./PipelineJson";
 
 const CATEGORIES: OpCategory[] = ["tonal", "color", "texture", "optical"];
+
+const ASPECT_PRESETS: Array<{ label: string; aspect: number }> = [
+  { label: "1:1", aspect: 1 },
+  { label: "4:5", aspect: 4 / 5 },
+  { label: "3:2", aspect: 3 / 2 },
+  { label: "16:9", aspect: 16 / 9 },
+  { label: "9:16", aspect: 9 / 16 },
+];
 
 export type MaskListItem = {
   id: string;
@@ -32,6 +46,9 @@ export function Controls({
   onSegmentSubject,
   segmenting,
   segmentError,
+  imageWidth,
+  imageHeight,
+  onFrameChange,
 }: {
   opState: OpState;
   onOpChange: (next: OpState) => void;
@@ -46,6 +63,10 @@ export function Controls({
   onSegmentSubject: () => void;
   segmenting: boolean;
   segmentError: string | null;
+  /** Full-resolution photo size, for aspect-ratio math. */
+  imageWidth: number;
+  imageHeight: number;
+  onFrameChange: (next: FrameTransform | undefined) => void;
 }) {
   const editingTarget = activeMaskId;
   const projectedOpState = useMemo(
@@ -55,6 +76,18 @@ export function Controls({
 
   const handleProjectedOpChange = (projected: OpState) => {
     onOpChange(mergeOpStateForMask(opState, projected, editingTarget));
+  };
+
+  const frame = opState.frame;
+  const rotation = frame?.rotate ?? 0;
+  const frameSize = rotatedSize(imageWidth, imageHeight, rotation);
+  const cropAspect = frame?.crop
+    ? (frame.crop.width * frameSize.width) / (frame.crop.height * frameSize.height)
+    : null;
+
+  const applyAspect = (aspect: number) => {
+    const crop = centeredAspectCrop(frameSize.width, frameSize.height, aspect);
+    onFrameChange(normalizeFrame({ rotate: rotation, ...(crop ? { crop } : {}) }));
   };
 
   return (
@@ -121,6 +154,72 @@ export function Controls({
               ))}
             </menu>
           </fieldset>
+        )}
+      </section>
+
+      <section className="category frame-section">
+        <h2>Frame</h2>
+        <p className="hint">
+          Non-destructive: the photo outside the crop stays visible but dimmed, and is only
+          trimmed on export.
+        </p>
+        <fieldset className="frame-group">
+          <legend>Rotate</legend>
+          <menu aria-label="Rotate">
+            <li>
+              <button
+                type="button"
+                onClick={() => onFrameChange(rotateFrame(frame, -1))}
+                title="Rotate 90° counter-clockwise"
+              >
+                ⟲ 90°
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={() => onFrameChange(rotateFrame(frame, 1))}
+                title="Rotate 90° clockwise"
+              >
+                ⟳ 90°
+              </button>
+            </li>
+            {rotation !== 0 && (
+              <li>
+                <output className="frame-state">{rotation}°</output>
+              </li>
+            )}
+          </menu>
+        </fieldset>
+        <fieldset className="frame-group">
+          <legend>Crop</legend>
+          <menu aria-label="Crop aspect presets">
+            {ASPECT_PRESETS.map((preset) => {
+              const active =
+                cropAspect !== null && Math.abs(cropAspect - preset.aspect) / preset.aspect < 0.02;
+              return (
+                <li key={preset.label}>
+                  <button
+                    type="button"
+                    className={active ? "active" : undefined}
+                    aria-pressed={active}
+                    onClick={() => applyAspect(preset.aspect)}
+                    title={`Crop to ${preset.label} (drag the frame on the photo to adjust)`}
+                  >
+                    {preset.label}
+                  </button>
+                </li>
+              );
+            })}
+          </menu>
+          {frame?.crop && (
+            <p className="hint">Drag the frame or its corners on the photo to adjust.</p>
+          )}
+        </fieldset>
+        {!isNoopFrame(frame) && (
+          <button type="button" className="frame-clear" onClick={() => onFrameChange(undefined)}>
+            Clear crop &amp; rotation
+          </button>
         )}
       </section>
 

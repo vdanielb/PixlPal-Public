@@ -3,7 +3,7 @@
  * so adding an op to `OPERATION_DEFS` teaches the agent about it for free.
  */
 
-import { CATEGORY_LABELS, OPERATION_DEFS, type OpState } from "@pixelcam/shared";
+import { CATEGORY_LABELS, OPERATION_DEFS, describeFrame, isNoopFrame, type OpState } from "@pixelcam/shared";
 import { describeOpParams } from "./tools";
 
 export function buildSystemPrompt(): string {
@@ -51,6 +51,18 @@ export function buildSystemPrompt(): string {
     "  invert_mask and dodge_burn shadows (negative) or lens_blur on the complement.",
     "- Prefer shadows_highlights for whole-frame 'open the shadows' / 'recover the",
     "  highlights' (Lightroom-style dual recovery). Keep exposure for global EV.",
+    "- Reframing (crop and rotate) goes through set_frame. It is non-destructive:",
+    "  the editor keeps showing the whole photo with the area outside the crop",
+    "  dimmed, and the crop is only applied on export. The preview attached to",
+    "  your messages is always the full uncropped frame.",
+    "- For 'crop to portrait, centered on the person' and similar: segment the",
+    "  subject first, then set_frame with subjectMaskId and an aspect like 4:5",
+    "  (portrait), 1:1 (square), 16:9 (wide), 9:16 (story). 'Straighten' beyond",
+    "  90-degree steps is not available; say so if asked.",
+    "- Cropping can only trim from the edges. 'Crop X out of the frame' works",
+    "  when X sits near an edge — segment X, look at where it is, and pick a crop",
+    "  that excludes its bounds while keeping the composition. If X is in the",
+    "  middle of the frame, explain that cropping cannot remove it.",
     "- If segment fails, fall back to a global edit and say so briefly.",
     "- Use remove_operations to switch an effect off, rather than setting it to zero.",
     "- Several knobs usually beat one. A convincing 'moody' look is a curve, some",
@@ -67,7 +79,10 @@ export function buildSystemPrompt(): string {
 /** The edit as the model should see it at the start of a turn. */
 export function describeCurrentEdit(opState: OpState): string {
   const active = OPERATION_DEFS.filter((def) => opState[def.op] !== undefined);
-  if (active.length === 0) {
+  const frameLine = isNoopFrame(opState.frame)
+    ? null
+    : `- frame: ${describeFrame(opState.frame)}`;
+  if (active.length === 0 && !frameLine) {
     return "Current edit: nothing is active, the photo is untouched.";
   }
   const lines = active.map((def) => {
@@ -87,5 +102,6 @@ export function describeCurrentEdit(opState: OpState): string {
     }
     return `- ${def.op}: ${rendered || "defaults"}${mask}`;
   });
+  if (frameLine) lines.push(frameLine);
   return ["Current edit, in pipeline order:", ...lines].join("\n");
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  isNoopFrame,
   serializePipeline,
+  type FrameTransform,
   type MaskDeclaration,
 } from "@pixelcam/shared";
-import type { ImageStats, InvertMaskHost, SegmentHost } from "@pixelcam/ai";
+import type { ImageStats, InvertMaskHost, MaskBoundsHost, SegmentHost } from "@pixelcam/ai";
 import { ChatPanel } from "./components/ChatPanel";
 import { Controls } from "./components/Controls";
 import { Dropzone } from "./components/Dropzone";
@@ -14,7 +16,7 @@ import { exportImage, loadImageFile, type LoadedImage } from "./lib/image";
 import { analyzeImage } from "./lib/imageStats";
 import { opStateToPipeline, type OpState } from "./lib/pipelineState";
 import { loadAgentSettings, saveAgentSettings, type AgentSettings } from "./lib/agent/settings";
-import { createSegmenter, MaskStore, type MaskBitmap } from "./lib/segmentation";
+import { createSegmenter, maskBounds, MaskStore, type MaskBitmap } from "./lib/segmentation";
 import { useAgent } from "./lib/useAgent";
 import { useEditHistory } from "./lib/useEditHistory";
 import { useWebMcp } from "./lib/webmcp";
@@ -67,6 +69,12 @@ export function App() {
     [opState, maskDeclarations],
   );
   const pipelineJson = useMemo(() => serializePipeline(pipeline), [pipeline]);
+  // The preview never applies the frame: the canvas shows the whole photo and
+  // renders the crop as a dimmed overlay instead. Only export applies it.
+  const previewPipelineJson = useMemo(
+    () => serializePipeline({ ...pipeline, frame: undefined }),
+    [pipeline],
+  );
 
   const previewMasks: EngineMaskPayload | null = useMemo(() => {
     void maskVersion;
@@ -126,6 +134,19 @@ export function App() {
     [],
   );
 
+  const runGetMaskBounds = useCallback<MaskBoundsHost>(async (maskId) => {
+    const stored = maskStoreRef.current.get(maskId.trim());
+    if (!stored) {
+      const known = maskStoreRef.current.list().map((m) => m.id).join(", ") || "(none)";
+      return { error: `unknown mask "${maskId}". Known masks: ${known}.` };
+    }
+    const bounds = maskBounds(stored.mask);
+    if (!bounds) {
+      return { error: `mask "${maskId}" is empty, so it has no bounding box.` };
+    }
+    return { bounds };
+  }, []);
+
   const agent = useAgent({
     settings: agentSettings,
     getEditSnapshot: () => history.current,
@@ -133,6 +154,7 @@ export function App() {
     getPreviewImage: () => (image ? (engine.previewFrame ?? image.preview) : null),
     segment: runSegment,
     invertMask: runInvertMask,
+    getMaskBounds: runGetMaskBounds,
     onApplyEdit: (nextOpState) => history.commit({ opState: nextOpState }),
   });
 
@@ -168,6 +190,7 @@ export function App() {
     }),
     segment: runSegment,
     invertMask: runInvertMask,
+    getMaskBounds: runGetMaskBounds,
   });
 
   const suggestions = useSuggestions(
@@ -200,15 +223,30 @@ export function App() {
 
   useEffect(() => {
     if (image && engine.ready) {
-      engine.requestPreview(pipelineJson, previewMasks);
+      engine.requestPreview(previewPipelineJson, previewMasks);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [image, engine.ready, pipelineJson, previewMasks]);
+  }, [image, engine.ready, previewPipelineJson, previewMasks]);
 
   const handleOpChange = useCallback(
     (next: OpState) => {
       // Coalesced: a whole slider drag collapses into one undo step.
       history.commit({ opState: next }, { coalesce: true });
+    },
+    [history],
+  );
+
+  const handleFrameChange = useCallback(
+    (frame: FrameTransform | undefined, options?: { coalesce?: boolean }) => {
+      const next: OpState = { ...latestOpState.current };
+      if (frame && !isNoopFrame(frame)) {
+        next.frame = frame;
+      } else {
+        delete next.frame;
+      }
+      latestOpState.current = next;
+      // Crop drags coalesce into one undo step, like slider drags.
+      history.commit({ opState: next }, { coalesce: options?.coalesce === true });
     },
     [history],
   );
@@ -334,6 +372,9 @@ export function App() {
             onSegmentSubject={handleSegmentSubject}
             segmenting={segmenting}
             segmentError={segmentError}
+            imageWidth={image.full.width}
+            imageHeight={image.full.height}
+            onFrameChange={handleFrameChange}
           />
           <EditorCanvas
             frame={engine.previewFrame ?? image.preview}
@@ -345,6 +386,8 @@ export function App() {
             overlayMask={overlayMask}
             showOverlay={showOverlay}
             onToggleOverlay={() => setShowOverlay((v) => !v)}
+            frameTransform={opState.frame}
+            onFrameChange={handleFrameChange}
           />
           <ChatPanel
             agent={agent}

@@ -6,6 +6,7 @@
 //! masks let hosts apply ops locally without the engine knowing where masks
 //! came from.
 
+pub mod frame;
 pub mod mask;
 pub mod ops;
 pub mod pipeline;
@@ -15,6 +16,7 @@ use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, ImageReader};
 
+pub use frame::{CropRect, Frame, Rotation};
 pub use mask::MaskBuf;
 pub use pipeline::Pipeline;
 
@@ -28,7 +30,7 @@ pub enum EngineError {
     ImageEncode(String),
     #[error("invalid pipeline: {0}")]
     InvalidPipeline(String),
-    #[error("unsupported pipeline version {0} (engine supports versions 1..=2)")]
+    #[error("unsupported pipeline version {0} (engine supports versions 1..=3)")]
     UnsupportedVersion(u32),
     #[error("unknown operation \"{0}\"")]
     UnknownOperation(String),
@@ -105,18 +107,30 @@ pub fn process_with_masks(
     let mut buf = ImageBuf::from_rgba8(width, height, rgba.as_raw());
 
     pipeline.apply(&mut buf, masks)?;
+    let buf = pipeline.apply_frame(buf);
 
     encode(&buf, output)
 }
 
-/// Process a raw RGBA8 buffer in place-ish (returns the processed copy).
+/// Result of the raw-pixel fast path. Since pipeline v3 the frame transform
+/// (rotate + crop) can change dimensions, so the output size travels with the
+/// pixels.
+#[derive(Debug)]
+pub struct ProcessedRgba8 {
+    pub width: u32,
+    pub height: u32,
+    /// Interleaved RGBA, `width * height * 4` bytes.
+    pub pixels: Vec<u8>,
+}
+
+/// Process a raw RGBA8 buffer (returns the processed copy plus its size).
 /// This is the fast path for canvas `ImageData`: no decode/encode round trip.
 pub fn process_rgba8(
     pixels: &[u8],
     width: u32,
     height: u32,
     pipeline_json: &str,
-) -> Result<Vec<u8>, EngineError> {
+) -> Result<ProcessedRgba8, EngineError> {
     process_rgba8_with_masks(pixels, width, height, pipeline_json, None)
 }
 
@@ -127,7 +141,7 @@ pub fn process_rgba8_with_masks(
     height: u32,
     pipeline_json: &str,
     masks: Option<&HashMap<String, MaskBuf>>,
-) -> Result<Vec<u8>, EngineError> {
+) -> Result<ProcessedRgba8, EngineError> {
     if pixels.len() != (width as usize) * (height as usize) * 4 {
         return Err(EngineError::ImageDecode(format!(
             "pixel buffer length {} does not match {}x{} RGBA",
@@ -139,7 +153,12 @@ pub fn process_rgba8_with_masks(
     let pipeline = Pipeline::from_json(pipeline_json)?;
     let mut buf = ImageBuf::from_rgba8(width, height, pixels);
     pipeline.apply(&mut buf, masks)?;
-    Ok(buf.to_rgba8())
+    let buf = pipeline.apply_frame(buf);
+    Ok(ProcessedRgba8 {
+        width: buf.width,
+        height: buf.height,
+        pixels: buf.to_rgba8(),
+    })
 }
 
 /// Build a mask map from parallel id list + concatenated f32 planes.
@@ -242,8 +261,96 @@ mod tests {
         let buf = gradient_image(16, 8);
         let pixels = buf.to_rgba8();
         let out = process_rgba8(&pixels, 16, 8, r#"{"version":1,"operations":[]}"#).unwrap();
-        assert_eq!(out.len(), pixels.len());
-        assert_eq!(out, pixels);
+        assert_eq!((out.width, out.height), (16, 8));
+        assert_eq!(out.pixels.len(), pixels.len());
+        assert_eq!(out.pixels, pixels);
+    }
+
+    #[test]
+    fn frame_crop_changes_output_dimensions() {
+        let buf = gradient_image(16, 8);
+        let pixels = buf.to_rgba8();
+        let pipeline = r#"{
+            "version": 3,
+            "operations": [],
+            "frame": { "crop": { "x": 0.25, "y": 0.0, "width": 0.5, "height": 1.0 } }
+        }"#;
+        let out = process_rgba8(&pixels, 16, 8, pipeline).unwrap();
+        assert_eq!((out.width, out.height), (8, 8));
+        // Cropped pixel (0,0) is original pixel (4,0).
+        let src = (4 * 4) as usize;
+        assert_eq!(&out.pixels[0..4], &pixels[src..src + 4]);
+    }
+
+    #[test]
+    fn frame_rotate_swaps_dimensions_everywhere() {
+        let buf = gradient_image(16, 8);
+        let pixels = buf.to_rgba8();
+        let pipeline = r#"{"version":3,"operations":[],"frame":{"rotate":90}}"#;
+
+        let raw = process_rgba8(&pixels, 16, 8, pipeline).unwrap();
+        assert_eq!((raw.width, raw.height), (8, 16));
+
+        let png = gradient_png(16, 8);
+        let encoded = process(&png, pipeline, OutputFormat::Png).unwrap();
+        let decoded = image::load_from_memory(&encoded).unwrap().to_rgba8();
+        assert_eq!((decoded.width(), decoded.height()), (8, 16));
+    }
+
+    #[test]
+    fn frame_applies_after_masked_operations() {
+        // Mask the left half, brighten it, then crop to the *right* half:
+        // the output must be entirely unbrightened even though the mask only
+        // exists in original image space.
+        let width = 8u32;
+        let height = 4u32;
+        let buf = gradient_image(width, height);
+        let pixels = buf.to_rgba8();
+
+        let mut mask_data = vec![0.0f32; (width * height) as usize];
+        for y in 0..height {
+            for x in 0..width / 2 {
+                mask_data[(y * width + x) as usize] = 1.0;
+            }
+        }
+        let mut masks = HashMap::new();
+        masks.insert("left".into(), MaskBuf::new(width, height, mask_data).unwrap());
+
+        let pipeline = r#"{
+            "version": 3,
+            "operations": [{ "op": "exposure", "params": { "amount": 0.8 }, "mask": "left" }],
+            "frame": { "crop": { "x": 0.5, "y": 0.0, "width": 0.5, "height": 1.0 } }
+        }"#;
+        let out = process_rgba8_with_masks(&pixels, width, height, pipeline, Some(&masks)).unwrap();
+        assert_eq!((out.width, out.height), (4, 4));
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                let dst = ((y * 4 + x) * 4) as usize;
+                let src = ((y * width + x + 4) * 4) as usize;
+                assert_eq!(out.pixels[dst], pixels[src], "pixel ({x},{y}) should be untouched");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_rejects_bad_values() {
+        let png = gradient_png(8, 8);
+        assert!(matches!(
+            process(
+                &png,
+                r#"{"version":3,"operations":[],"frame":{"rotate":45}}"#,
+                OutputFormat::Png
+            ),
+            Err(EngineError::InvalidPipeline(msg)) if msg.contains("rotate")
+        ));
+        assert!(matches!(
+            process(
+                &png,
+                r#"{"version":3,"operations":[],"frame":{"crop":{"x":0,"y":0,"width":0,"height":1}}}"#,
+                OutputFormat::Png
+            ),
+            Err(EngineError::InvalidPipeline(_))
+        ));
     }
 
     #[test]
@@ -306,7 +413,9 @@ mod tests {
             ]
         }"#;
 
-        let out = process_rgba8_with_masks(&pixels, width, height, pipeline, Some(&masks)).unwrap();
+        let out = process_rgba8_with_masks(&pixels, width, height, pipeline, Some(&masks))
+            .unwrap()
+            .pixels;
         let left = ((0 * width + 1) * 4) as usize;
         let right = ((0 * width + 6) * 4) as usize;
         assert!(out[left] > pixels[left], "masked side should brighten");
@@ -364,7 +473,8 @@ mod tests {
             r#"{"version":2,"operations":[{"op":"exposure","params":{"amount":0.15},"mask":"left"}]}"#,
             Some(&masks),
         )
-        .unwrap();
+        .unwrap()
+        .pixels;
         let half = process_rgba8_with_masks(
             &pixels,
             width,
@@ -372,7 +482,8 @@ mod tests {
             r#"{"version":2,"operations":[{"op":"exposure","params":{"amount":0.15},"mask":"left","maskStrength":0.5}]}"#,
             Some(&masks),
         )
-        .unwrap();
+        .unwrap()
+        .pixels;
 
         let full_delta = full[0] as i16 - pixels[0] as i16;
         let half_delta = half[0] as i16 - pixels[0] as i16;

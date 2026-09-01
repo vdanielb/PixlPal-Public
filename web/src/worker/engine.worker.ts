@@ -57,6 +57,8 @@ function post(msg: WorkerResponse, transfer: Transferable[] = []) {
   (self as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 }
 
+type ProcessedPixels = { pixels: Uint8Array; width: number; height: number };
+
 function runProcess(
   pixels: Uint8Array,
   width: number,
@@ -64,12 +66,25 @@ function runProcess(
   pipelineJson: string,
   maskIdsJson?: string,
   masksBuf?: ArrayBuffer,
-): Uint8Array {
-  if (maskIdsJson && masksBuf) {
-    const masks = new Float32Array(masksBuf);
-    return process_rgba8_with_masks(pixels, width, height, pipelineJson, maskIdsJson, masks);
+): ProcessedPixels {
+  // Since pipeline v3 the frame transform (rotate + crop) can change the
+  // output size, so the engine returns dimensions along with the pixels.
+  const out =
+    maskIdsJson && masksBuf
+      ? process_rgba8_with_masks(
+          pixels,
+          width,
+          height,
+          pipelineJson,
+          maskIdsJson,
+          new Float32Array(masksBuf),
+        )
+      : process_rgba8(pixels, width, height, pipelineJson);
+  try {
+    return { pixels: out.pixels(), width: out.width, height: out.height };
+  } finally {
+    out.free();
   }
-  return process_rgba8(pixels, width, height, pipelineJson);
 }
 
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
@@ -104,11 +119,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           {
             type: "processed",
             jobId: msg.jobId,
-            pixels: out.buffer as ArrayBuffer,
-            width: preview.width,
-            height: preview.height,
+            pixels: out.pixels.buffer as ArrayBuffer,
+            width: out.width,
+            height: out.height,
           },
-          [out.buffer as ArrayBuffer],
+          [out.pixels.buffer as ArrayBuffer],
         );
       } catch (err) {
         post({ type: "error", jobId: msg.jobId, message: String(err) });
@@ -131,11 +146,11 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
           {
             type: "fullProcessed",
             requestId: msg.requestId,
-            pixels: out.buffer as ArrayBuffer,
-            width: msg.width,
-            height: msg.height,
+            pixels: out.pixels.buffer as ArrayBuffer,
+            width: out.width,
+            height: out.height,
           },
-          [out.buffer as ArrayBuffer],
+          [out.pixels.buffer as ArrayBuffer],
         );
       } catch (err) {
         post({ type: "error", requestId: msg.requestId, message: String(err) });

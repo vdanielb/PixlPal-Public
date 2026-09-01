@@ -5,6 +5,7 @@
  * output all flow through this one representation.
  */
 
+import { isNoopFrame, normalizeFrame, type FrameTransform } from "./frame";
 import { OPERATION_DEFS } from "./operations";
 import type { MaskDeclaration, OpName, Operation, Pipeline } from "./types";
 
@@ -19,7 +20,14 @@ export type ActiveOp = {
   maskStrength?: number;
 };
 
-export type OpState = Partial<Record<OpName, ActiveOp>>;
+/**
+ * Active operations keyed by name, plus the optional frame transform
+ * (rotate + crop). Keeping the frame inside OpState means undo/redo, agent
+ * snapshots, and WebMCP commits all handle it with zero extra plumbing.
+ */
+export type OpState = Partial<Record<OpName, ActiveOp>> & {
+  frame?: FrameTransform;
+};
 
 export function opStateToPipeline(
   state: OpState,
@@ -45,11 +53,13 @@ export function opStateToPipeline(
     operations.push(entry);
   }
 
-  const version = usesMask || masks.length > 0 ? 2 : 1;
+  const frame = normalizeFrame(state.frame);
+  const version = frame ? 3 : usesMask || masks.length > 0 ? 2 : 1;
   return {
     version,
     ...(masks.length > 0 ? { masks } : {}),
     operations,
+    ...(frame ? { frame } : {}),
   };
 }
 
@@ -62,6 +72,9 @@ export function pipelineToOpState(pipeline: Pipeline): OpState {
       ...(operation.invertMask ? { invertMask: true } : {}),
       ...(operation.maskStrength !== undefined ? { maskStrength: operation.maskStrength } : {}),
     };
+  }
+  if (!isNoopFrame(pipeline.frame)) {
+    state.frame = normalizeFrame(pipeline.frame);
   }
   return state;
 }

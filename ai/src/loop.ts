@@ -25,6 +25,8 @@ export interface RunAgentOptions {
   segment?: import("./tools").SegmentHost;
   /** Host mask-invert callback; required for the invert_mask tool to succeed. */
   invertMask?: import("./tools").InvertMaskHost;
+  /** Host mask-bounds callback; required for subject-centered set_frame crops. */
+  getMaskBounds?: import("./tools").MaskBoundsHost;
   maxSteps?: number;
   signal?: AbortSignal;
   /** Called after every tool call that changed the edit, so the UI updates live. */
@@ -106,6 +108,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
         imageStats: options.imageStats,
         segment: options.segment,
         invertMask: options.invertMask,
+        getMaskBounds: options.getMaskBounds,
         signal: options.signal,
       });
       opState = outcome.opState;

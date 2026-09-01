@@ -21,6 +21,7 @@ import {
   executeTool,
   type ImageStats,
   type InvertMaskHost,
+  type MaskBoundsHost,
   type SegmentHost,
   type ToolContext,
   type ToolResult,
@@ -47,6 +48,7 @@ const TOOL_TITLES: Record<string, string> = {
   [TOOL_NAMES.getImageStats]: "Measure the photo",
   [TOOL_NAMES.segment]: "Select a subject",
   [TOOL_NAMES.invertMask]: "Select everything else",
+  [TOOL_NAMES.setFrame]: "Crop or rotate the photo",
   [WEBMCP_TOOL_NAMES.getEditState]: "Read the current edit",
 };
 
@@ -87,6 +89,7 @@ export interface WebMcpHost {
   getEditState(): WebMcpEditState;
   segment?: SegmentHost;
   invertMask?: InvertMaskHost;
+  getMaskBounds?: MaskBoundsHost;
 }
 
 function textResult(text: string, isError = false): ModelContextToolResult {
@@ -159,6 +162,7 @@ export function createWebMcpTools(host: WebMcpHost): ModelContextTool[] {
           imageStats: host.getImageStats(),
           segment: host.segment,
           invertMask: host.invertMask,
+          getMaskBounds: host.getMaskBounds,
           signal: options?.signal,
         };
         const outcome = await executeTool(tool.name, input, ctx);

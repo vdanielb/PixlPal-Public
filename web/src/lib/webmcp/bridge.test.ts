@@ -74,6 +74,7 @@ describe("createWebMcpTools", () => {
       TOOL_NAMES.resetEdits,
       TOOL_NAMES.getImageStats,
       TOOL_NAMES.segment,
+      TOOL_NAMES.setFrame,
       TOOL_NAMES.invertMask,
       WEBMCP_TOOL_NAMES.getEditState,
     ]);
@@ -157,6 +158,25 @@ describe("createWebMcpTools", () => {
     expect(text(result)).toContain("42.0%");
   });
 
+  it("routes set_frame subject crops through the host's mask bounds", async () => {
+    const host = makeHost({
+      getMaskBounds: async () => ({ bounds: { x: 0.5, y: 0.25, width: 0.25, height: 0.5 } }),
+    });
+    const tools = createWebMcpTools(host);
+    const result = await call(toolByName(tools, TOOL_NAMES.setFrame), {
+      subjectMaskId: "person",
+      aspect: "4:5",
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(text(result)).toContain("crop");
+    const crop = host.opState.frame?.crop;
+    expect(crop).toBeDefined();
+    // Crop contains the subject.
+    expect(crop!.x).toBeLessThanOrEqual(0.5);
+    expect(crop!.x + crop!.width).toBeGreaterThanOrEqual(0.75);
+  });
+
   it("reports the editor snapshot through get_edit_state", async () => {
     const tools = createWebMcpTools(makeHost());
     const result = await call(toolByName(tools, WEBMCP_TOOL_NAMES.getEditState));
@@ -201,9 +221,9 @@ describe("registerWebMcpTools", () => {
     const result = await registerWebMcpTools(modelContext, makeHost(), {
       signal: controller.signal,
     });
-    expect(result.registered).toHaveLength(7);
+    expect(result.registered).toHaveLength(8);
     expect(result.failed).toHaveLength(0);
-    expect(registered.size).toBe(7);
+    expect(registered.size).toBe(8);
 
     controller.abort();
     expect(registered.size).toBe(0);
@@ -215,6 +235,6 @@ describe("registerWebMcpTools", () => {
     const second = await registerWebMcpTools(modelContext, makeHost());
 
     expect(second.registered).toHaveLength(0);
-    expect(second.failed).toHaveLength(7);
+    expect(second.failed).toHaveLength(8);
   });
 });

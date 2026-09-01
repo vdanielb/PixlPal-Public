@@ -24,6 +24,7 @@ import {
   type ChatMessage,
   type ImageStats,
   type InvertMaskHost,
+  type MaskBoundsHost,
   type SegmentHost,
 } from "@pixelcam/ai";
 import type { OpState } from "./pipelineState";
@@ -75,6 +76,8 @@ export interface UseAgentOptions {
   segment?: SegmentHost;
   /** Host mask invert; creates a selectable complement in MaskStore. */
   invertMask?: InvertMaskHost;
+  /** Host mask bounding box; powers subject-centered set_frame crops. */
+  getMaskBounds?: MaskBoundsHost;
   onApplyEdit: (opState: OpState) => void;
 }
 
@@ -178,6 +181,7 @@ export function useAgent(options: UseAgentOptions): AgentApi {
         onApplyEdit,
         segment,
         invertMask,
+        getMaskBounds,
       } = optionsRef.current;
       const mode = resolveAgentTransport(settings);
 
@@ -244,6 +248,7 @@ export function useAgent(options: UseAgentOptions): AgentApi {
             imageStats: getImageStats(),
             segment,
             invertMask,
+            getMaskBounds,
             signal: controller.signal,
             onOpState: (opState) => {
               changed = true;
