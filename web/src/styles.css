@@ -619,9 +619,11 @@ input[type="range"]::-moz-range-thumb {
   border: none;
 }
 
+/* Paint the gradient on the track only. WebKit top-aligns thumbs to the
+   runnable-track, so offset by (track - thumb) / 2 to sit on center. */
 input[type="range"].hsl-track {
   height: 8px;
-  background: var(--hsl-track, var(--border-strong));
+  background: transparent;
 }
 
 input[type="range"].hsl-track::-moz-range-track {
@@ -633,18 +635,20 @@ input[type="range"].hsl-track::-moz-range-track {
 
 input[type="range"].hsl-track::-webkit-slider-runnable-track {
   height: 8px;
+  border: none;
   border-radius: 999px;
   background: var(--hsl-track, var(--border-strong));
 }
 
 input[type="range"].hsl-track::-webkit-slider-thumb {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
+  margin-top: -3px;
 }
 
 input[type="range"].hsl-track::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 /* pipeline json */
