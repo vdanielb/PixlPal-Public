@@ -131,6 +131,29 @@ const SCRIPTS = [
     turns: [[toolCall("reset_edits", {})], "Cleared everything — back to the original photo."],
   },
   {
+    // "crop to portrait, center on the person" — segment then subject-fit crop.
+    match: /crop.*(portrait|person|subject)|portrait.*crop|reframe/,
+    turns: [
+      [toolCall("segment", { prompt: "the person" })],
+      [toolCall("set_frame", { aspect: "4:5", subjectMaskId: "person", padding: 0.2 })],
+      "Cropped to a 4:5 portrait centered on the person. The dimmed part of the preview stays out of the export — drag the frame if you want to reframe.",
+    ],
+  },
+  {
+    match: /crop.*(square|wide|16)|square crop/,
+    turns: [
+      [toolCall("set_frame", { aspect: "square" })],
+      "Cropped to the largest centered square. Everything outside the frame is dimmed, not deleted — export applies the trim.",
+    ],
+  },
+  {
+    match: /rotate|sideways|turn it/,
+    turns: [
+      [toolCall("set_frame", { rotate: 90 })],
+      "Rotated the photo 90° clockwise. Ask again to keep turning, or say 'rotate 0' to reset.",
+    ],
+  },
+  {
     match: /blur.*(background|except)|everything except|de-emphasize|emphasize.*(object|person|subject)/,
     turns: [
       [toolCall("segment", { prompt: "the person" })],
