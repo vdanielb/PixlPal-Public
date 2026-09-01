@@ -13,7 +13,7 @@ PixlPal (formerly PixelCamAI) is a **fully client-side** monorepo (no backend, n
 - **Re-run `pnpm build:wasm` after editing any Rust in `engine/`** — Vite does NOT rebuild the WASM automatically; the dev server only hot-reloads TS/React.
 - Run the dev server with `pnpm dev:web` (Vite, http://localhost:5173). Hosted `/api/agent` is not available under Vite alone — either fill in *Use your own API key* (e.g. `pnpm mock:llm` on `:3939`) or run `pnpm --filter @pixelcam/web cf:preview` / `wrangler dev` for the Worker.
 - Typecheck with `pnpm --filter @pixelcam/web typecheck`. There is **no ESLint** configured in this repo.
-- Production deploy: `pnpm deploy:web`. Hosted assistant needs the `OPENAI_API_KEY` Worker secret (`cd web && pnpm exec wrangler secret put OPENAI_API_KEY`). Anonymous visitors get `CHAT_LIMIT` chats (default 3) via cookie + KV — no accounts. Hosted prompts are also capped by `MAX_USER_MESSAGE_CHARS` (default 1000) and each completion by `MAX_OUTPUT_TOKENS` (default 4096, includes reasoning tokens). `AGENT_COMPLETION_TIMEOUT_MS` (default 90s) is only a hung-request guard.
+- Production deploy: `pnpm deploy:web`. Hosted assistant needs the `OPENAI_API_KEY` Worker secret (`cd web && pnpm exec wrangler secret put OPENAI_API_KEY`). Anonymous visitors get `CHAT_LIMIT` chats (default 3) via cookie + KV — no accounts — and each chat is cut off after `MAX_COMPLETIONS_PER_CHAT` model completions (default 60). Hosted prompts are also capped by `MAX_USER_MESSAGE_CHARS` (default 1000) and each completion by `MAX_OUTPUT_TOKENS` (default 4096, includes reasoning tokens). `AGENT_COMPLETION_TIMEOUT_MS` (default 90s) is only a hung-request guard.
 
 ### Engine
 - Tests: `pnpm test:engine` (`cargo test`, ~38 tests).

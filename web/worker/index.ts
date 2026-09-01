@@ -3,7 +3,8 @@
  *
  * The editing loop, tools, and segmentation stay in the browser. This Worker
  * only (1) holds the product LLM key, (2) caps anonymous visitors to a small
- * number of chats via a cookie + KV, (3) rejects oversized user messages,
+ * number of chats — each with a finite completion budget — via a cookie +
+ * KV, (3) rejects oversized user messages,
  * caps generated tokens, times out hung completions, and (4) proxies one
  * model completion per request. Static assets keep being served by the
  * assets binding.
@@ -17,9 +18,10 @@ import {
 import type { AgentSettings } from "../src/lib/agent/settings";
 import {
   DEFAULT_CHAT_LIMIT,
+  DEFAULT_MAX_COMPLETIONS_PER_CHAT,
   VISITOR_COOKIE,
   VISITOR_TTL_SECONDS,
-  admitChat,
+  admitCompletion,
   isValidChatId,
   newVisitorId,
   parseVisitorRecord,
@@ -47,6 +49,7 @@ export interface Env {
   LLM_BASE_URL: string;
   LLM_MODEL: string;
   CHAT_LIMIT?: string;
+  MAX_COMPLETIONS_PER_CHAT?: string;
   MAX_USER_MESSAGE_CHARS?: string;
   MAX_OUTPUT_TOKENS?: string;
   AGENT_COMPLETION_TIMEOUT_MS?: string;
@@ -85,6 +88,10 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 
 function chatLimit(env: Env): number {
   return positiveInt(env.CHAT_LIMIT, DEFAULT_CHAT_LIMIT);
+}
+
+function completionBudget(env: Env): number {
+  return positiveInt(env.MAX_COMPLETIONS_PER_CHAT, DEFAULT_MAX_COMPLETIONS_PER_CHAT);
 }
 
 function maxUserMessageChars(env: Env): number {
@@ -303,14 +310,27 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
   }
 
   const record = await loadVisitor(env, visitorId);
-  const admitted = admitChat(record, parsed.chatId, limit);
-  if (!admitted) {
-    const quota = quotaFromRecord(record, limit);
+  const admitted = admitCompletion(record, parsed.chatId, limit, completionBudget(env));
+  if (admitted.kind === "chat_limit") {
     return withVisitorCookie(
       json(
         {
-          error: `Chat limit reached (${quota.limit} chats). Start over in a new browser profile, or use your own API key in Model settings.`,
-          quota,
+          error: `Chat limit reached (${admitted.quota.limit} chats). Start over in a new browser profile, or use your own API key in Model settings.`,
+          quota: admitted.quota,
+          limits,
+        },
+        { status: 403 },
+      ),
+      setCookie,
+    );
+  }
+  if (admitted.kind === "chat_exhausted") {
+    return withVisitorCookie(
+      json(
+        {
+          error:
+            "This chat has hit its length limit. Start a new chat, or use your own API key in Model settings.",
+          quota: admitted.quota,
           limits,
         },
         { status: 403 },
@@ -319,8 +339,14 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  if (admitted.isNew) {
+  // Charge the completion before spending it. KV allows about one write per
+  // second per key; completions are separated by a full model round trip, so
+  // that is normally fine — if a write does get throttled, serve the
+  // completion anyway and forfeit the charge rather than fail the turn.
+  try {
     await saveVisitor(env, visitorId, admitted.record);
+  } catch (error) {
+    console.warn("chat quota write failed", error);
   }
 
   const cachedOutput = { current: parsed.cachedOutput };
