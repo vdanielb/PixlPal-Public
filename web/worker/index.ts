@@ -3,7 +3,8 @@
  *
  * The editing loop, tools, and segmentation stay in the browser. This Worker
  * only (1) holds the product LLM key, (2) caps anonymous visitors to a small
- * number of chats via a cookie + KV, (3) rejects oversized user messages,
+ * number of chats — each with a finite completion budget — via a cookie plus
+ * a per-visitor Durable Object, (3) rejects oversized user messages,
  * caps generated tokens, times out hung completions, and (4) proxies one
  * model completion per request. Static assets keep being served by the
  * assets binding.
@@ -17,17 +18,14 @@ import {
 import type { AgentSettings } from "../src/lib/agent/settings";
 import {
   DEFAULT_CHAT_LIMIT,
+  DEFAULT_MAX_COMPLETIONS_PER_CHAT,
   VISITOR_COOKIE,
-  VISITOR_TTL_SECONDS,
-  admitChat,
   isValidChatId,
   newVisitorId,
-  parseVisitorRecord,
-  quotaFromRecord,
   readCookie,
   visitorCookieHeader,
+  type AdmitDecision,
   type ChatQuota,
-  type VisitorRecord,
 } from "./quota";
 import {
   DEFAULT_COMPLETION_TIMEOUT_MS,
@@ -40,13 +38,15 @@ import {
 
 export interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
-  CHAT_QUOTA: KVNamespace;
+  /** One VisitorQuota Durable Object per anonymous visitor. */
+  VISITOR_QUOTA: DurableObjectNamespace;
   /** Abuse guard: completions per visitor per window. */
   AGENT_RATE_LIMITER: RateLimit;
   OPENAI_API_KEY: string;
   LLM_BASE_URL: string;
   LLM_MODEL: string;
   CHAT_LIMIT?: string;
+  MAX_COMPLETIONS_PER_CHAT?: string;
   MAX_USER_MESSAGE_CHARS?: string;
   MAX_OUTPUT_TOKENS?: string;
   AGENT_COMPLETION_TIMEOUT_MS?: string;
@@ -56,9 +56,13 @@ interface RateLimit {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-interface KVNamespace {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+interface DurableObjectStub {
+  fetch(input: string, init?: RequestInit): Promise<Response>;
+}
+
+interface DurableObjectNamespace {
+  idFromName(name: string): unknown;
+  get(id: unknown): DurableObjectStub;
 }
 
 interface AgentRequestBody {
@@ -85,6 +89,10 @@ function positiveInt(raw: string | undefined, fallback: number): number {
 
 function chatLimit(env: Env): number {
   return positiveInt(env.CHAT_LIMIT, DEFAULT_CHAT_LIMIT);
+}
+
+function completionBudget(env: Env): number {
+  return positiveInt(env.MAX_COMPLETIONS_PER_CHAT, DEFAULT_MAX_COMPLETIONS_PER_CHAT);
 }
 
 function maxUserMessageChars(env: Env): number {
@@ -116,18 +124,35 @@ function llmSettings(env: Env): AgentSettings | null {
   };
 }
 
-function visitorKey(visitorId: string): string {
-  return `visitor:${visitorId}`;
+function visitorQuotaStub(env: Env, visitorId: string): DurableObjectStub {
+  return env.VISITOR_QUOTA.get(env.VISITOR_QUOTA.idFromName(visitorId));
 }
 
-async function loadVisitor(env: Env, visitorId: string): Promise<VisitorRecord | null> {
-  return parseVisitorRecord(await env.CHAT_QUOTA.get(visitorKey(visitorId)));
+/** Ask the visitor's Durable Object for their current quota. */
+async function fetchVisitorQuota(env: Env, visitorId: string): Promise<ChatQuota> {
+  const response = await visitorQuotaStub(env, visitorId).fetch(
+    `https://visitor-quota/quota?limit=${chatLimit(env)}`,
+  );
+  const body = (await response.json()) as { quota: ChatQuota };
+  return body.quota;
 }
 
-async function saveVisitor(env: Env, visitorId: string, record: VisitorRecord): Promise<void> {
-  await env.CHAT_QUOTA.put(visitorKey(visitorId), JSON.stringify(record), {
-    expirationTtl: VISITOR_TTL_SECONDS,
+/**
+ * Atomically admit one completion for this visitor's chat. The Durable
+ * Object serializes concurrent requests, so parallel first messages cannot
+ * race past the chat limit.
+ */
+async function admitVisitorCompletion(
+  env: Env,
+  visitorId: string,
+  chatId: string,
+): Promise<AdmitDecision> {
+  const response = await visitorQuotaStub(env, visitorId).fetch("https://visitor-quota/admit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chatId, limit: chatLimit(env), budget: completionBudget(env) }),
   });
+  return (await response.json()) as AdmitDecision;
 }
 
 function resolveVisitor(request: Request): { visitorId: string; setCookie: string | null } {
@@ -249,8 +274,7 @@ async function handleSuggest(request: Request, env: Env): Promise<Response> {
 
 async function handleQuota(request: Request, env: Env): Promise<Response> {
   const { visitorId, setCookie } = resolveVisitor(request);
-  const record = await loadVisitor(env, visitorId);
-  const quota = quotaFromRecord(record, chatLimit(env));
+  const quota = await fetchVisitorQuota(env, visitorId);
   return withVisitorCookie(json({ quota, limits: hostedLimits(env) }), setCookie);
 }
 
@@ -292,7 +316,6 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
   }
 
   const { visitorId, setCookie } = resolveVisitor(request);
-  const limit = chatLimit(env);
 
   const rate = await env.AGENT_RATE_LIMITER.limit({ key: `visitor:${visitorId}` });
   if (!rate.success) {
@@ -302,15 +325,13 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const record = await loadVisitor(env, visitorId);
-  const admitted = admitChat(record, parsed.chatId, limit);
-  if (!admitted) {
-    const quota = quotaFromRecord(record, limit);
+  const admitted = await admitVisitorCompletion(env, visitorId, parsed.chatId);
+  if (admitted.kind === "chat_limit") {
     return withVisitorCookie(
       json(
         {
-          error: `Chat limit reached (${quota.limit} chats). Start over in a new browser profile, or use your own API key in Model settings.`,
-          quota,
+          error: `Chat limit reached (${admitted.quota.limit} chats). Start over in a new browser profile, or use your own API key in Model settings.`,
+          quota: admitted.quota,
           limits,
         },
         { status: 403 },
@@ -318,9 +339,19 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
       setCookie,
     );
   }
-
-  if (admitted.isNew) {
-    await saveVisitor(env, visitorId, admitted.record);
+  if (admitted.kind === "chat_exhausted") {
+    return withVisitorCookie(
+      json(
+        {
+          error:
+            "This chat has hit its length limit. Start a new chat, or use your own API key in Model settings.",
+          quota: admitted.quota,
+          limits,
+        },
+        { status: 403 },
+      ),
+      setCookie,
+    );
   }
 
   const cachedOutput = { current: parsed.cachedOutput };
@@ -365,6 +396,9 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
 function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || /timed? ?out/i.test(error.message));
 }
+
+// Durable Object classes must be exported from the Worker entry module.
+export { VisitorQuota } from "./visitorQuota";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
