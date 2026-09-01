@@ -1,4 +1,4 @@
-//! Declarative pipeline format (versions 1 and 2).
+//! Declarative pipeline format (versions 1 to 3).
 //!
 //! ```json
 //! {
@@ -19,18 +19,24 @@
 //! Version 2 adds optional per-op `mask` / `invertMask` / `maskStrength`.
 //! Mask *bitmaps* are supplied by the host at apply time — the engine never
 //! runs a model.
+//!
+//! Version 3 adds the optional top-level `frame` (non-destructive rotate +
+//! crop). The frame is applied *after* every operation, so ops and masks work
+//! in original image space; the crop rectangle is normalized to the rotated
+//! frame. It is the only stage that changes image dimensions.
 
 use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::frame::{CropRect, Frame, Rotation};
 use crate::mask::{blend_masked, MaskBuf};
 use crate::ops;
 use crate::{EngineError, ImageBuf};
 
 pub const MIN_SUPPORTED_VERSION: u32 = 1;
-pub const MAX_SUPPORTED_VERSION: u32 = 2;
+pub const MAX_SUPPORTED_VERSION: u32 = 3;
 
 #[derive(Debug, Deserialize)]
 struct RawPipeline {
@@ -41,6 +47,26 @@ struct RawPipeline {
     masks: Vec<RawMaskDecl>,
     #[serde(default)]
     operations: Vec<RawOperation>,
+    #[serde(default)]
+    frame: Option<RawFrame>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFrame {
+    #[serde(default)]
+    rotate: Option<u32>,
+    #[serde(default)]
+    crop: Option<RawCrop>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCrop {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
 }
 
 fn default_version() -> u32 {
@@ -85,6 +111,7 @@ pub struct MaskDecl {
 pub struct Pipeline {
     operations: Vec<BoundOp>,
     mask_decls: Vec<MaskDecl>,
+    frame: Frame,
 }
 
 #[derive(Debug)]
@@ -189,10 +216,41 @@ impl Pipeline {
                 mask_strength,
             });
         }
+        let frame = match raw.frame {
+            None => Frame::default(),
+            Some(raw_frame) => {
+                let rotation = match raw_frame.rotate {
+                    None => Rotation::R0,
+                    Some(degrees) => Rotation::from_degrees(degrees)?,
+                };
+                let crop = match raw_frame.crop {
+                    None => None,
+                    Some(c) => Some(CropRect::validated(c.x, c.y, c.width, c.height)?),
+                };
+                Frame { rotation, crop }
+            }
+        };
+
         Ok(Self {
             operations,
             mask_decls,
+            frame,
         })
+    }
+
+    /// The non-destructive frame transform (identity when absent).
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    /// Apply the frame transform to an already-processed image, producing the
+    /// final (possibly differently-sized) output.
+    pub fn apply_frame(&self, image: ImageBuf) -> ImageBuf {
+        if self.frame.is_noop() {
+            image
+        } else {
+            self.frame.apply(image)
+        }
     }
 
     /// Apply the pipeline. `masks` maps declaration ids to bitmaps from the host.
@@ -326,6 +384,50 @@ mod tests {
         let p = Pipeline::from_json(json).unwrap();
         assert_eq!(p.len(), 2);
         assert_eq!(p.mask_decls.len(), 1);
+    }
+
+    #[test]
+    fn parses_version_three_with_frame() {
+        let json = r#"{
+            "version": 3,
+            "operations": [{ "op": "exposure", "params": { "amount": 0.2 } }],
+            "frame": {
+                "rotate": 90,
+                "crop": { "x": 0.1, "y": 0.2, "width": 0.5, "height": 0.4 }
+            }
+        }"#;
+        let p = Pipeline::from_json(json).unwrap();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p.frame().rotation, Rotation::R90);
+        let crop = p.frame().crop.unwrap();
+        assert!((crop.x - 0.1).abs() < 1e-6);
+        assert!((crop.height - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn frame_defaults_to_identity() {
+        let p = Pipeline::from_json(r#"{"version":3,"operations":[]}"#).unwrap();
+        assert!(p.frame().is_noop());
+        let partial =
+            Pipeline::from_json(r#"{"version":3,"operations":[],"frame":{"rotate":180}}"#).unwrap();
+        assert_eq!(partial.frame().rotation, Rotation::R180);
+        assert!(partial.frame().crop.is_none());
+    }
+
+    #[test]
+    fn frame_rejects_unknown_fields_and_bad_rotation() {
+        assert!(Pipeline::from_json(
+            r#"{"version":3,"operations":[],"frame":{"rotate":45}}"#
+        )
+        .is_err());
+        assert!(Pipeline::from_json(
+            r#"{"version":3,"operations":[],"frame":{"zoom":2}}"#
+        )
+        .is_err());
+        assert!(Pipeline::from_json(
+            r#"{"version":3,"operations":[],"frame":{"crop":{"x":0,"y":0,"width":0.5}}}"#
+        )
+        .is_err());
     }
 
     #[test]
