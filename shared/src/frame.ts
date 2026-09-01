@@ -105,6 +105,23 @@ export function rotateRectInto(rect: CropRect, rotate: FrameRotation | undefined
 }
 
 /**
+ * Set an absolute rotation, carrying an existing crop through the rotation
+ * change so it keeps selecting the same pixels.
+ */
+export function withRotation(
+  frame: FrameTransform | undefined,
+  rotate: FrameRotation,
+): FrameTransform | undefined {
+  const current = frame?.rotate ?? 0;
+  const steps = ((((rotate - current) / 90) % 4) + 4) % 4;
+  let crop = frame?.crop;
+  if (crop) {
+    for (let i = 0; i < steps; i += 1) crop = rotateRectCw(crop);
+  }
+  return normalizeFrame({ rotate, ...(crop ? { crop } : {}) });
+}
+
+/**
  * Rotate the whole frame a further 90 degrees (positive = clockwise,
  * negative = counter-clockwise), carrying the crop so it keeps selecting the
  * same pixels.
@@ -114,14 +131,8 @@ export function rotateFrame(
   direction: 1 | -1,
 ): FrameTransform | undefined {
   const current = frame?.rotate ?? 0;
-  const rotate = (((current + direction * 90) % 360) + 360) % 360 as FrameRotation;
-  let crop = frame?.crop;
-  if (crop) {
-    // CCW is three CW turns of the rect.
-    const turns = direction === 1 ? 1 : 3;
-    for (let i = 0; i < turns; i += 1) crop = rotateRectCw(crop!);
-  }
-  return normalizeFrame({ rotate, ...(crop ? { crop } : {}) });
+  const rotate = ((((current + direction * 90) % 360) + 360) % 360) as FrameRotation;
+  return withRotation(frame, rotate);
 }
 
 /**

@@ -40,6 +40,37 @@ export function rasterizeBoxes(boxes: Box[], width: number, height: number): Mas
   return { width, height, data };
 }
 
+/**
+ * Bounding box of the mask's active area, normalized 0..1. Returns null when
+ * nothing exceeds the threshold.
+ */
+export function maskBounds(
+  mask: MaskBitmap,
+  threshold = 0.5,
+): { x: number; y: number; width: number; height: number } | null {
+  let minX = mask.width;
+  let minY = mask.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < mask.height; y += 1) {
+    for (let x = 0; x < mask.width; x += 1) {
+      if (mask.data[y * mask.width + x]! > threshold) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return {
+    x: minX / mask.width,
+    y: minY / mask.height,
+    width: (maxX - minX + 1) / mask.width,
+    height: (maxY - minY + 1) / mask.height,
+  };
+}
+
 export function maskCoverage(mask: MaskBitmap, threshold = 0.5): number {
   if (mask.data.length === 0) return 0;
   let count = 0;

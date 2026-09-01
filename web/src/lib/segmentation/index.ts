@@ -10,6 +10,7 @@ export {
   type ModelSource,
 } from "./modelSource";
 export {
+  maskBounds,
   maskCoverage,
   rasterizeBoxes,
   rasterizePolygons,

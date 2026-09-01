@@ -18,9 +18,22 @@
 
 import {
   OPERATION_DEFS,
+  centeredAspectCrop,
+  clampCrop,
+  cropAroundSubject,
   defaultOperation,
+  describeFrame,
+  framedSize,
+  isFrameRotation,
+  normalizeFrame,
   opStateToPipeline,
+  parseAspect,
+  rotateRectInto,
+  rotatedSize,
+  withRotation,
   type ActiveOp,
+  type CropRect,
+  type FrameTransform,
   type OperationDef,
   type OpName,
   type OpState,
@@ -35,6 +48,7 @@ export const TOOL_NAMES = {
   getImageStats: "get_image_stats",
   segment: "segment",
   invertMask: "invert_mask",
+  setFrame: "set_frame",
 } as const;
 
 /** Short human labels for rendering tool activity in a chat transcript. */
@@ -45,6 +59,7 @@ export const TOOL_LABELS: Record<string, string> = {
   [TOOL_NAMES.getImageStats]: "Reading the photo",
   [TOOL_NAMES.segment]: "Finding subject",
   [TOOL_NAMES.invertMask]: "Selecting inverse",
+  [TOOL_NAMES.setFrame]: "Framing",
 };
 
 const OP_NAMES: OpName[] = OPERATION_DEFS.map((def) => def.op);
@@ -66,6 +81,19 @@ export type InvertMaskHost = (
   maskId: string,
   signal?: AbortSignal,
 ) => Promise<InvertMaskHostResult>;
+
+/**
+ * Bounding box of a mask, normalized 0..1 in *unrotated* image space.
+ * `set_frame` transforms it into the rotated frame before fitting a crop.
+ */
+export type MaskBoundsHostResult =
+  | { bounds: CropRect }
+  | { error: string };
+
+export type MaskBoundsHost = (
+  maskId: string,
+  signal?: AbortSignal,
+) => Promise<MaskBoundsHostResult>;
 
 function findDef(op: unknown): OperationDef | undefined {
   return OPERATION_DEFS.find((def) => def.op === op);
@@ -208,6 +236,68 @@ export const AGENT_TOOLS: ToolSchema[] = [
     },
   },
   {
+    name: TOOL_NAMES.setFrame,
+    description: [
+      "Reframe the photo non-destructively: rotate in 90-degree steps and/or",
+      "crop. The crop only trims the frame — it cannot remove an object from",
+      "the middle of the picture; if a subject the user wants gone is not near",
+      "an edge, say so instead of cropping.",
+      "Rotation is absolute and clockwise; an existing crop follows the rotation.",
+      "The crop rectangle is normalized (0..1 fractions of the rotated frame).",
+      "Three ways to crop, use exactly one per call:",
+      "(1) `subjectMaskId` from a prior segment call, plus optional `aspect` and",
+      "`padding` — fits the crop around that subject; this is the right tool for",
+      "'crop to portrait, centered on the person' (segment first, then set_frame).",
+      "(2) `aspect` alone — largest centered crop with that shape, e.g. '4:5'",
+      "portrait, '1:1' square, '16:9' wide, '9:16' story, 'original'.",
+      "(3) explicit `crop` rect when you know exact fractions from looking at the",
+      "preview (the preview you see is always the full uncropped frame; the crop",
+      "shows there as a brighter window). Pass `crop: null` to clear the crop,",
+      "`rotate: 0` to clear rotation.",
+    ].join(" "),
+    parameters: {
+      type: "object",
+      properties: {
+        rotate: {
+          type: "integer",
+          enum: [0, 90, 180, 270],
+          description: "Absolute clockwise rotation in degrees.",
+        },
+        crop: {
+          type: ["object", "null"],
+          description:
+            "Explicit normalized crop rect in the rotated frame, or null to remove the crop.",
+          properties: {
+            x: { type: "number", minimum: 0, maximum: 1 },
+            y: { type: "number", minimum: 0, maximum: 1 },
+            width: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+            height: { type: "number", exclusiveMinimum: 0, maximum: 1 },
+          },
+          required: ["x", "y", "width", "height"],
+          additionalProperties: false,
+        },
+        aspect: {
+          type: "string",
+          description:
+            'Crop shape as "W:H" (e.g. "4:5", "3:2", "16:9", "9:16"), "square", or "original".',
+        },
+        subjectMaskId: {
+          type: "string",
+          description:
+            "Mask id from segment/invert_mask; the crop is fitted around this subject.",
+        },
+        padding: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description:
+            "Margin around the subject as a fraction of its size. Default 0.15; use more for loose framing.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: TOOL_NAMES.invertMask,
     description: [
       "Create a selectable mask that is the inverse of an existing mask from segment.",
@@ -239,6 +329,8 @@ export interface ToolContext {
   segment?: SegmentHost;
   /** Host-provided mask invert. Required for the invert_mask tool. */
   invertMask?: InvertMaskHost;
+  /** Host-provided mask bounding box. Required for subject-centered crops. */
+  getMaskBounds?: MaskBoundsHost;
   signal?: AbortSignal;
 }
 
@@ -415,6 +507,8 @@ export async function executeTool(
       return segment(args, ctx);
     case TOOL_NAMES.invertMask:
       return invertMask(args, ctx);
+    case TOOL_NAMES.setFrame:
+      return setFrame(args, ctx);
     default:
       return fail(
         ctx,
@@ -594,6 +688,166 @@ async function segment(args: Record<string, unknown>, ctx: ToolContext): Promise
     }
     return fail(ctx, error instanceof Error ? error.message : String(error));
   }
+}
+
+function parseCropArg(raw: unknown): { crop: CropRect } | { error: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { error: '"crop" must be an object like { "x": 0.1, "y": 0, "width": 0.5, "height": 1 } or null.' };
+  }
+  const rect = raw as Record<string, unknown>;
+  const values: number[] = [];
+  for (const key of ["x", "y", "width", "height"] as const) {
+    const value = rect[key];
+    const numeric =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim() !== ""
+          ? Number(value)
+          : Number.NaN;
+    if (!Number.isFinite(numeric)) {
+      return { error: `"crop.${key}" must be a number between 0 and 1.` };
+    }
+    values.push(numeric);
+  }
+  const clamped = clampCrop({ x: values[0]!, y: values[1]!, width: values[2]!, height: values[3]! });
+  if (!clamped) {
+    return {
+      error:
+        '"crop" must describe a rectangle inside the frame with positive width and height (all values are 0..1 fractions).',
+    };
+  }
+  return { crop: clamped };
+}
+
+async function setFrame(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
+  const { rotate, crop, aspect, subjectMaskId, padding } = args;
+
+  const hasRotate = rotate !== undefined;
+  const hasCrop = crop !== undefined;
+  const hasAspect = aspect !== undefined;
+  const hasSubject = subjectMaskId !== undefined;
+
+  if (!hasRotate && !hasCrop && !hasAspect && !hasSubject) {
+    return fail(
+      ctx,
+      "set_frame needs at least one of: rotate, crop (or null), aspect, subjectMaskId.",
+    );
+  }
+  if (hasCrop && (hasAspect || hasSubject)) {
+    return fail(
+      ctx,
+      'pass either an explicit "crop" or "aspect"/"subjectMaskId", not both — the explicit rect would win silently otherwise.',
+    );
+  }
+
+  if (hasRotate && !isFrameRotation(rotate)) {
+    return fail(ctx, '"rotate" must be 0, 90, 180 or 270 (absolute, clockwise degrees).');
+  }
+  if (hasAspect && typeof aspect !== "string") {
+    return fail(ctx, '"aspect" must be a string like "4:5", "16:9", "square" or "original".');
+  }
+  if (hasSubject && (typeof subjectMaskId !== "string" || subjectMaskId.trim() === "")) {
+    return fail(ctx, '"subjectMaskId" must be a non-empty mask id from segment or invert_mask.');
+  }
+  let paddingValue = 0.15;
+  if (padding !== undefined) {
+    const numeric =
+      typeof padding === "number"
+        ? padding
+        : typeof padding === "string" && padding.trim() !== ""
+          ? Number(padding)
+          : Number.NaN;
+    if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) {
+      return fail(ctx, '"padding" must be a number between 0 and 1.');
+    }
+    paddingValue = numeric;
+  }
+
+  const stats = ctx.imageStats;
+  if ((hasAspect || hasSubject) && !stats) {
+    return fail(ctx, "no photo is open, so it cannot be reframed.");
+  }
+
+  // 1. Rotation first; an existing crop follows it so it keeps selecting the
+  //    same pixels.
+  const current = ctx.opState.frame;
+  let next: FrameTransform | undefined = hasRotate
+    ? withRotation(current, rotate as 0 | 90 | 180 | 270)
+    : normalizeFrame(current);
+  const rotation = next?.rotate ?? 0;
+
+  // 2. Then the crop, from whichever source was given.
+  if (hasCrop) {
+    if (crop === null) {
+      next = normalizeFrame({ rotate: rotation });
+    } else {
+      const parsed = parseCropArg(crop);
+      if ("error" in parsed) return fail(ctx, parsed.error);
+      next = normalizeFrame({ rotate: rotation, crop: parsed.crop });
+    }
+  } else if (hasSubject) {
+    if (!ctx.getMaskBounds) {
+      return fail(ctx, "subject bounds are not available in this editor session.");
+    }
+    const boundsResult = await ctx.getMaskBounds((subjectMaskId as string).trim(), ctx.signal);
+    if ("error" in boundsResult) return fail(ctx, boundsResult.error);
+
+    const frameSize = rotatedSize(stats!.width, stats!.height, rotation);
+    let aspectValue: number | undefined;
+    if (hasAspect) {
+      aspectValue = parseAspect(aspect as string, frameSize.width, frameSize.height);
+      if (aspectValue === undefined) {
+        return fail(
+          ctx,
+          `could not parse aspect "${String(aspect)}". Use "W:H" like "4:5" or "16:9", "square", or "original".`,
+        );
+      }
+    }
+    const subjectRect = rotateRectInto(boundsResult.bounds, rotation);
+    const fitted = cropAroundSubject(
+      frameSize.width,
+      frameSize.height,
+      subjectRect,
+      aspectValue,
+      paddingValue,
+    );
+    next = normalizeFrame({ rotate: rotation, ...(fitted ? { crop: fitted } : {}) });
+    if (!fitted) {
+      return fail(ctx, "could not fit a crop around that subject; it may fill the whole frame.");
+    }
+  } else if (hasAspect) {
+    const frameSize = rotatedSize(stats!.width, stats!.height, rotation);
+    const aspectValue = parseAspect(aspect as string, frameSize.width, frameSize.height);
+    if (aspectValue === undefined) {
+      return fail(
+        ctx,
+        `could not parse aspect "${String(aspect)}". Use "W:H" like "4:5" or "16:9", "square", or "original".`,
+      );
+    }
+    // A crop covering the whole frame (aspect == original) normalizes away,
+    // which is the same as clearing the crop.
+    const centered = centeredAspectCrop(frameSize.width, frameSize.height, aspectValue);
+    next = normalizeFrame({ rotate: rotation, ...(centered ? { crop: centered } : {}) });
+  }
+
+  const nextState: OpState = { ...ctx.opState };
+  if (next) {
+    nextState.frame = next;
+  } else {
+    delete nextState.frame;
+  }
+
+  const changed = JSON.stringify(ctx.opState.frame ?? null) !== JSON.stringify(next ?? null);
+  const summaryParts = [`Frame: ${describeFrame(next)}.`];
+  if (stats) {
+    const size = framedSize(stats.width, stats.height, next);
+    summaryParts.push(`Visible area is now ~${size.width}x${size.height} of the ${stats.width}x${stats.height} preview.`);
+  }
+  const result = ok(summaryParts.join(" "), nextState, []);
+  if (!changed) {
+    return unchanged(ctx, { ...result, summary: `Frame unchanged. ${result.summary}` });
+  }
+  return edited(nextState, result);
 }
 
 async function invertMask(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {

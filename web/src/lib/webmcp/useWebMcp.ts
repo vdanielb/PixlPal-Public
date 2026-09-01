@@ -46,6 +46,13 @@ export function useWebMcp(host: WebMcpHost): WebMcpStatus {
         }
         return invertMask(maskId, signal);
       },
+      getMaskBounds: (maskId, signal) => {
+        const getMaskBounds = hostRef.current.getMaskBounds;
+        if (!getMaskBounds) {
+          return Promise.resolve({ error: "mask bounds are not available in this session." });
+        }
+        return getMaskBounds(maskId, signal);
+      },
     };
 
     void registerWebMcpTools(modelContext, liveHost, { signal: controller.signal }).then(

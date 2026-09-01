@@ -381,6 +381,69 @@ section.subject .mask-list button small {
   color: var(--text-dim);
 }
 
+/* ---------- frame (crop + rotate) controls ---------- */
+
+section.frame-section .hint {
+  margin: 0 0 0.55rem;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+section.frame-section .frame-group {
+  margin: 0 0 0.6rem;
+  padding: 0.55rem 0.65rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+section.frame-section .frame-group legend {
+  padding: 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+section.frame-section .frame-group menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+section.frame-section .frame-group button {
+  padding: 0.35rem 0.6rem;
+  border-radius: 7px;
+  font-size: 0.8rem;
+}
+
+section.frame-section .frame-group button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+section.frame-section .frame-group .hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.72rem;
+}
+
+section.frame-section .frame-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+section.frame-section .frame-clear {
+  width: 100%;
+  font-size: 0.8rem;
+}
+
 .inline-error {
   margin: 0.45rem 0 0;
   color: var(--danger);

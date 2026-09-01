@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { OPERATION_DEFS, type OpState } from "@pixelcam/shared";
-import { AGENT_TOOLS, TOOL_NAMES, executeTool, type InvertMaskHost, type SegmentHost, type ToolOutcome } from "./tools";
+import {
+  AGENT_TOOLS,
+  TOOL_NAMES,
+  executeTool,
+  type InvertMaskHost,
+  type MaskBoundsHost,
+  type SegmentHost,
+  type ToolOutcome,
+} from "./tools";
 import type { ImageStats } from "./types";
 
 const STATS: ImageStats = {
@@ -370,6 +378,147 @@ describe("invert_mask", () => {
       invertMask,
     );
     expect(expectErr(outcome).error).toContain("maskId");
+  });
+});
+
+describe("set_frame", () => {
+  const runFrame = (args: unknown, opState: OpState = {}, getMaskBounds?: MaskBoundsHost) =>
+    executeTool(TOOL_NAMES.setFrame, JSON.stringify(args), {
+      opState,
+      imageStats: STATS,
+      getMaskBounds,
+    });
+
+  it("sets an absolute rotation", async () => {
+    const outcome = await runFrame({ rotate: 90 });
+    expectOk(outcome);
+    expect(outcome.opState.frame).toEqual({ rotate: 90 });
+    expect(outcome.changed).toBe(true);
+    const pipeline = expectOk(outcome).data?.pipeline as { version: number };
+    expect(pipeline.version).toBe(3);
+  });
+
+  it("creates the largest centered crop for an aspect ratio", async () => {
+    const outcome = await runFrame({ aspect: "1:1" });
+    expectOk(outcome);
+    const crop = outcome.opState.frame?.crop;
+    expect(crop).toBeDefined();
+    // 1100x733 frame: a square crop is full height, 733/1100 of the width.
+    expect(crop!.height).toBeCloseTo(1, 3);
+    expect(crop!.width).toBeCloseTo(733 / 1100, 3);
+    expect(crop!.x).toBeCloseTo((1 - 733 / 1100) / 2, 3);
+    expect(crop!.y).toBeCloseTo(0, 3);
+  });
+
+  it("fits a portrait crop around a segmented subject", async () => {
+    const getMaskBounds: MaskBoundsHost = async () => ({
+      bounds: { x: 0.6, y: 0.2, width: 0.2, height: 0.4 },
+    });
+    const outcome = await runFrame({ aspect: "4:5", subjectMaskId: "person" }, {}, getMaskBounds);
+    expectOk(outcome);
+    const crop = outcome.opState.frame?.crop;
+    expect(crop).toBeDefined();
+    // The crop must contain the subject...
+    expect(crop!.x).toBeLessThanOrEqual(0.6);
+    expect(crop!.y).toBeLessThanOrEqual(0.2);
+    expect(crop!.x + crop!.width).toBeGreaterThanOrEqual(0.8);
+    expect(crop!.y + crop!.height).toBeGreaterThanOrEqual(0.6);
+    // ...and have a 4:5 pixel aspect ratio.
+    const pixelAspect = (crop!.width * STATS.width) / (crop!.height * STATS.height);
+    expect(pixelAspect).toBeCloseTo(0.8, 1);
+  });
+
+  it("carries an existing crop through a rotation change", async () => {
+    const before: OpState = { frame: { crop: { x: 0.5, y: 0, width: 0.5, height: 1 } } };
+    const outcome = await runFrame({ rotate: 90 }, before);
+    expectOk(outcome);
+    expect(outcome.opState.frame?.rotate).toBe(90);
+    const crop = outcome.opState.frame?.crop;
+    expect(crop!.x).toBeCloseTo(0, 3);
+    expect(crop!.y).toBeCloseTo(0.5, 3);
+    expect(crop!.width).toBeCloseTo(1, 3);
+    expect(crop!.height).toBeCloseTo(0.5, 3);
+  });
+
+  it("clears the crop with null and keeps the rotation", async () => {
+    const before: OpState = {
+      frame: { rotate: 180, crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 } },
+    };
+    const outcome = await runFrame({ crop: null }, before);
+    expectOk(outcome);
+    expect(outcome.opState.frame).toEqual({ rotate: 180 });
+  });
+
+  it("removes the frame entirely when everything is reset", async () => {
+    const before: OpState = {
+      frame: { rotate: 90, crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 } },
+    };
+    const outcome = await runFrame({ rotate: 0, crop: null }, before);
+    expectOk(outcome);
+    expect(outcome.opState.frame).toBeUndefined();
+    expect(outcome.changed).toBe(true);
+  });
+
+  it("accepts an explicit crop rect and clamps it into the frame", async () => {
+    const outcome = await runFrame({ crop: { x: 0.6, y: 0, width: 0.6, height: 1 } });
+    expectOk(outcome);
+    const crop = outcome.opState.frame?.crop;
+    expect(crop!.x + crop!.width).toBeLessThanOrEqual(1.0001);
+  });
+
+  it("leaves untouched operations alone", async () => {
+    const before: OpState = { grain: { params: { amount: 0.4, size: 1 } } };
+    const outcome = await runFrame({ aspect: "16:9" }, before);
+    expectOk(outcome);
+    expect(outcome.opState.grain).toEqual({ params: { amount: 0.4, size: 1 } });
+  });
+
+  it("rejects a rotation that is not a quarter turn", async () => {
+    expect(expectErr(await runFrame({ rotate: 45 })).error).toContain("0, 90, 180 or 270");
+  });
+
+  it("rejects combining an explicit crop with aspect or subject", async () => {
+    const outcome = await runFrame({
+      crop: { x: 0, y: 0, width: 0.5, height: 0.5 },
+      aspect: "1:1",
+    });
+    expect(expectErr(outcome).error).toContain("not both");
+  });
+
+  it("rejects an unparseable aspect", async () => {
+    expect(expectErr(await runFrame({ aspect: "cinematic" })).error).toContain("4:5");
+  });
+
+  it("rejects empty arguments with a hint", async () => {
+    expect(expectErr(await runFrame({})).error).toContain("at least one of");
+  });
+
+  it("fails cleanly when the host cannot provide mask bounds", async () => {
+    const outcome = await runFrame({ subjectMaskId: "person" });
+    expect(expectErr(outcome).error).toContain("not available");
+  });
+
+  it("surfaces unknown-mask errors from the host", async () => {
+    const getMaskBounds: MaskBoundsHost = async () => ({ error: 'unknown mask "nobody"' });
+    const outcome = await runFrame({ subjectMaskId: "nobody" }, {}, getMaskBounds);
+    expect(expectErr(outcome).error).toContain("nobody");
+  });
+
+  it("fails cleanly when no photo is open", async () => {
+    const outcome = await executeTool(
+      TOOL_NAMES.setFrame,
+      JSON.stringify({ aspect: "1:1" }),
+      { opState: {} },
+    );
+    expect(expectErr(outcome).error).toContain("no photo is open");
+  });
+
+  it("reports no change when the frame is already set", async () => {
+    const first = await runFrame({ aspect: "1:1" });
+    expectOk(first);
+    const second = await runFrame({ aspect: "1:1" }, first.opState);
+    expectOk(second);
+    expect(second.changed).toBe(false);
   });
 });
 

@@ -1,10 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { MaskStore } from "./maskStore";
+import { maskBounds } from "./rasterize";
 import type { MaskBitmap } from "./types";
 
 function bitmap(values: number[], width = 2, height = 2): MaskBitmap {
   return { width, height, data: Float32Array.from(values) };
 }
+
+describe("maskBounds", () => {
+  it("returns the normalized bounding box of the active area", () => {
+    const mask = bitmap(
+      [
+        0, 0, 0, 0,
+        0, 1, 1, 0,
+        0, 1, 1, 0,
+        0, 0, 0, 0,
+      ],
+      4,
+      4,
+    );
+    expect(maskBounds(mask)).toEqual({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 });
+  });
+
+  it("returns null for an empty mask", () => {
+    expect(maskBounds(bitmap([0, 0, 0, 0]))).toBeNull();
+  });
+});
 
 describe("MaskStore.invert", () => {
   it("creates a selectable complement with inverted coverage", () => {
