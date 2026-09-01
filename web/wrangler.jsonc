@@ -11,11 +11,21 @@
     "binding": "ASSETS",
     "run_worker_first": ["/api/*"]
   },
-  "kv_namespaces": [
+  // One Durable Object per anonymous visitor serializes chat admissions,
+  // so quota decisions are atomic (no KV read-modify-write races).
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "VISITOR_QUOTA",
+        "class_name": "VisitorQuota"
+      }
+    ]
+  },
+  "migrations": [
     {
-      "binding": "CHAT_QUOTA",
-      "id": "5994f941e4d24257bb2dd0700d06b76c",
-      "preview_id": "84603fc72baa4954b7030b2fcff20e6f"
+      "tag": "v1",
+      // SQLite-backed classes; required on the Workers Free plan.
+      "new_sqlite_classes": ["VisitorQuota"]
     }
   ],
   "ratelimits": [

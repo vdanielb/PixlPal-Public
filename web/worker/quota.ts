@@ -1,14 +1,18 @@
 /**
  * Anonymous chat quota without accounts.
  *
- * Each browser gets an HttpOnly visitor cookie. KV stores which chat ids that
- * visitor has already opened and how many model completions each of those
- * chats has consumed. A chat takes a quota slot when its id is first seen;
- * after that every completion (user turns and tool rounds alike) is charged
- * against that chat's finite budget, so one admitted id cannot be replayed
- * with fresh transcripts forever — the Worker never sees more than
+ * Each browser gets an HttpOnly visitor cookie, and a Durable Object per
+ * visitor (see visitorQuota.ts) stores which chat ids that visitor has
+ * already opened and how many model completions each of those chats has
+ * consumed. A chat takes a quota slot when its id is first seen; after that
+ * every completion (user turns and tool rounds alike) is charged against
+ * that chat's finite budget, so one admitted id cannot be replayed with
+ * fresh transcripts forever — the Worker never sees more than
  * `limit × budget` completions per visitor. Clearing cookies (or another
  * device) starts a fresh quota — that is the trade-off of no login.
+ *
+ * This module is the pure decision logic, kept free of Workers runtime
+ * types so it unit-tests in plain Node.
  */
 
 export const VISITOR_COOKIE = "pixelcam_vid";
@@ -54,45 +58,6 @@ export function quotaFromRecord(record: VisitorRecord | null, limit: number): Ch
   };
 }
 
-export function parseVisitorRecord(raw: string | null): VisitorRecord | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as {
-      chats?: unknown;
-      /** Pre-budget records stored bare id lists; migrate them on read. */
-      chatIds?: unknown;
-      updatedAt?: unknown;
-    };
-    const chats: ChatUsage[] = [];
-    if (Array.isArray(parsed.chats)) {
-      for (const entry of parsed.chats) {
-        if (!entry || typeof entry !== "object") continue;
-        const record = entry as { id?: unknown; completions?: unknown };
-        if (typeof record.id !== "string" || !isValidChatId(record.id)) continue;
-        const completions =
-          typeof record.completions === "number" && record.completions >= 0
-            ? Math.floor(record.completions)
-            : 0;
-        chats.push({ id: record.id, completions });
-      }
-    } else if (Array.isArray(parsed.chatIds)) {
-      for (const id of parsed.chatIds) {
-        if (typeof id === "string" && isValidChatId(id)) {
-          chats.push({ id, completions: 0 });
-        }
-      }
-    } else {
-      return null;
-    }
-    return {
-      chats,
-      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : Date.now(),
-    };
-  } catch {
-    return null;
-  }
-}
-
 export type AdmitResult =
   | {
       kind: "admitted";
@@ -105,6 +70,12 @@ export type AdmitResult =
   | { kind: "chat_limit"; quota: ChatQuota }
   /** A known chat id whose completion budget is spent. */
   | { kind: "chat_exhausted"; quota: ChatQuota };
+
+/** What the visitor's Durable Object reports back to the Worker. */
+export interface AdmitDecision {
+  kind: AdmitResult["kind"];
+  quota: ChatQuota;
+}
 
 /**
  * Admit one model completion for this visitor's chat. New chat ids take a

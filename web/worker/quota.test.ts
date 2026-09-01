@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   admitCompletion,
   isValidChatId,
-  parseVisitorRecord,
   quotaFromRecord,
   readCookie,
   visitorCookieHeader,
@@ -65,27 +64,6 @@ describe("admitCompletion", () => {
     expect(quotaFromRecord(record, 3)).toEqual({ used: 1, limit: 3, remaining: 2 });
     // ...and other chats keep working.
     expect(admitCompletion(record, "chat_two___", 3, 5).kind).toBe("admitted");
-  });
-});
-
-describe("parseVisitorRecord", () => {
-  it("drops malformed entries", () => {
-    expect(
-      parseVisitorRecord(
-        '{"chats":[{"id":"ok_chat1","completions":4},{"id":"bad"},{"completions":2}],"updatedAt":1}',
-      ),
-    ).toEqual({
-      chats: [{ id: "ok_chat1", completions: 4 }],
-      updatedAt: 1,
-    });
-    expect(parseVisitorRecord("not-json")).toBeNull();
-  });
-
-  it("migrates pre-budget records that stored bare chat id lists", () => {
-    expect(parseVisitorRecord('{"chatIds":["ok_chat1","bad"],"updatedAt":1}')).toEqual({
-      chats: [{ id: "ok_chat1", completions: 0 }],
-      updatedAt: 1,
-    });
   });
 });
 
