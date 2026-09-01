@@ -95,3 +95,33 @@ describe("MaskStore.invert", () => {
     }
   });
 });
+
+describe("MaskStore parametric masks", () => {
+  it("omits parametric masks from engine planes but keeps them in declarations", () => {
+    const store = new MaskStore();
+    store.put({
+      prompt: "the dress",
+      mask: bitmap([1, 0, 0, 0]),
+      segmenterId: "test",
+      preferredId: "dress",
+    });
+    store.put({
+      prompt: "luminance 0.70–1.00",
+      mask: bitmap([0, 1, 1, 0]),
+      segmenterId: "engine",
+      preferredId: "luma",
+      source: "luminance_range",
+      params: { min: 0.7, max: 1, softness: 0.1 },
+    });
+
+    const planes = store.toEngineMasks(2, 2);
+    expect(planes.ids).toEqual(["dress"]);
+    expect(planes.data.length).toBe(4);
+
+    const decls = store.declarations();
+    expect(decls.map((d) => d.id).sort()).toEqual(["dress", "luma"]);
+    const luma = decls.find((d) => d.id === "luma");
+    expect(luma?.source).toBe("luminance_range");
+    expect(luma?.params).toEqual({ min: 0.7, max: 1, softness: 0.1 });
+  });
+});

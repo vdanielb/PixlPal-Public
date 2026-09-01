@@ -8,6 +8,7 @@
 
 pub mod frame;
 pub mod mask;
+pub mod mask_sources;
 pub mod ops;
 pub mod pipeline;
 
@@ -30,7 +31,7 @@ pub enum EngineError {
     ImageEncode(String),
     #[error("invalid pipeline: {0}")]
     InvalidPipeline(String),
-    #[error("unsupported pipeline version {0} (engine supports versions 1..=3)")]
+    #[error("unsupported pipeline version {0} (engine supports versions 1..=4)")]
     UnsupportedVersion(u32),
     #[error("unknown operation \"{0}\"")]
     UnknownOperation(String),
@@ -191,6 +192,28 @@ pub fn masks_from_planes(
         map.insert(id.clone(), MaskBuf::new(width, height, data)?);
     }
     Ok(map)
+}
+
+/// Render a single parametric mask declaration against the input pixels.
+/// Used by the host for overlay preview; the same generator runs inside
+/// [`Pipeline::apply`] before any ops.
+pub fn render_mask(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    decl_json: &str,
+) -> Result<Vec<f32>, EngineError> {
+    if pixels.len() != (width as usize) * (height as usize) * 4 {
+        return Err(EngineError::ImageDecode(format!(
+            "pixel buffer length {} does not match {}x{} RGBA",
+            pixels.len(),
+            width,
+            height
+        )));
+    }
+    let decl = pipeline::MaskDecl::from_json(decl_json)?;
+    let buf = ImageBuf::from_rgba8(width, height, pixels);
+    Ok(decl.render(&buf)?.data)
 }
 
 fn encode(buf: &ImageBuf, output: OutputFormat) -> Result<Vec<u8>, EngineError> {
@@ -493,5 +516,112 @@ mod tests {
         // Unmasked pixel unchanged under both.
         assert_eq!(full[8], pixels[8]);
         assert_eq!(half[8], pixels[8]);
+    }
+
+    #[test]
+    fn parametric_luminance_mask_limits_an_op() {
+        let width = 4u32;
+        let height = 1u32;
+        // Dark, dark, bright, bright.
+        let mut pixels = vec![0u8; 16];
+        pixels[8] = 220;
+        pixels[9] = 220;
+        pixels[10] = 220;
+        pixels[11] = 255;
+        pixels[12] = 220;
+        pixels[13] = 220;
+        pixels[14] = 220;
+        pixels[15] = 255;
+
+        let pipeline = r#"{
+            "version": 4,
+            "masks": [{ "id": "hi", "source": "luminance_range", "params": { "min": 0.6, "max": 1.0, "softness": 0.02 } }],
+            "operations": [{ "op": "exposure", "params": { "amount": 0.8 }, "mask": "hi" }]
+        }"#;
+        let out = process_rgba8(&pixels, width, height, pipeline).unwrap().pixels;
+        assert_eq!(out[0], pixels[0], "dark pixel must stay unmasked");
+        assert!(out[8] > pixels[8], "bright pixel should be exposed");
+    }
+
+    #[test]
+    fn luminance_mask_evaluates_against_input_not_current() {
+        // Dark red and bright red. Global exposure would lift the dark pixel
+        // into the luminance range; the mask must still be computed on input.
+        let width = 2u32;
+        let height = 1u32;
+        let pixels = vec![
+            40, 0, 0, 255,
+            230, 20, 20, 255,
+        ];
+        let pipeline = r#"{
+            "version": 4,
+            "masks": [{ "id": "hi", "source": "luminance_range", "params": { "min": 0.2, "max": 1.0, "softness": 0.02 } }],
+            "operations": [
+                { "op": "exposure", "params": { "amount": 1.0 } },
+                { "op": "saturation", "params": { "amount": 1.0 }, "mask": "hi" }
+            ]
+        }"#;
+        let with_mask = process_rgba8(&pixels, width, height, pipeline).unwrap().pixels;
+        let exposure_only = process_rgba8(
+            &pixels,
+            width,
+            height,
+            r#"{"version":1,"operations":[{"op":"exposure","params":{"amount":1.0}}]}"#,
+        )
+        .unwrap()
+        .pixels;
+        // Left pixel: masked sat should not apply, so it matches exposure-only.
+        assert_eq!(with_mask[0], exposure_only[0]);
+        assert_eq!(with_mask[1], exposure_only[1]);
+        // Right pixel: extra saturation on top of exposure.
+        let right_spread_masked = with_mask[4] as i16 - with_mask[5] as i16;
+        let right_spread_exp = exposure_only[4] as i16 - exposure_only[5] as i16;
+        assert!(
+            right_spread_masked > right_spread_exp,
+            "bright side should get extra saturation"
+        );
+    }
+
+    #[test]
+    fn mix_of_host_bitmap_and_parametric_mask() {
+        let width = 4u32;
+        let height = 1u32;
+        let pixels = vec![128u8; 16];
+        let mut mask_data = vec![0.0f32; 4];
+        mask_data[0] = 1.0;
+        let mut masks = HashMap::new();
+        masks.insert("left".into(), MaskBuf::new(width, height, mask_data).unwrap());
+
+        let pipeline = r#"{
+            "version": 4,
+            "masks": [
+                { "id": "left", "source": "segmentation", "feather": 0 },
+                { "id": "top", "source": "linear_gradient", "params": { "x0": 0, "y0": 0, "x1": 1, "y1": 0 } }
+            ],
+            "operations": [
+                { "op": "exposure", "params": { "amount": 0.4 }, "mask": "left" },
+                { "op": "contrast", "params": { "amount": 0.3 }, "mask": "top" }
+            ]
+        }"#;
+        let out = process_rgba8_with_masks(&pixels, width, height, pipeline, Some(&masks)).unwrap();
+        assert_eq!(out.pixels.len(), 16);
+        assert!(out.pixels[0] > pixels[0], "host-masked left pixel brightens");
+    }
+
+    #[test]
+    fn render_mask_matches_pipeline_luminance() {
+        let width = 4u32;
+        let height = 1u32;
+        let pixels = vec![
+            10, 10, 10, 255,
+            10, 10, 10, 255,
+            240, 240, 240, 255,
+            240, 240, 240, 255,
+        ];
+        let decl = r#"{"id":"hi","source":"luminance_range","params":{"min":0.5,"max":1.0,"softness":0.02}}"#;
+        let plane = render_mask(&pixels, width, height, decl).unwrap();
+        assert_eq!(plane.len(), 4);
+        assert!(plane[0] < 0.1);
+        assert!(plane[3] > 0.9);
     }
 }

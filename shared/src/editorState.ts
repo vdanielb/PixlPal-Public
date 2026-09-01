@@ -7,7 +7,13 @@
 
 import { isNoopFrame, normalizeFrame, type FrameTransform } from "./frame";
 import { OPERATION_DEFS } from "./operations";
-import type { MaskDeclaration, OpName, Operation, Pipeline } from "./types";
+import {
+  isParametricMaskSource,
+  type MaskDeclaration,
+  type OpName,
+  type Operation,
+  type Pipeline,
+} from "./types";
 
 export type ParamValues = Record<string, number | string>;
 
@@ -54,7 +60,8 @@ export function opStateToPipeline(
   }
 
   const frame = normalizeFrame(state.frame);
-  const version = frame ? 3 : usesMask || masks.length > 0 ? 2 : 1;
+  const hasParametric = masks.some((mask) => isParametricMaskSource(mask.source));
+  const version = hasParametric ? 4 : frame ? 3 : usesMask || masks.length > 0 ? 2 : 1;
   return {
     version,
     ...(masks.length > 0 ? { masks } : {}),

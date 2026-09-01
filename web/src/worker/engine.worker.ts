@@ -12,7 +12,7 @@
  *   <- { type: "ready" } | { type: "error", jobId?, requestId?, message }
  */
 
-import init, { process_rgba8, process_rgba8_with_masks } from "../engine/pixelcam_engine";
+import init, { process_rgba8, process_rgba8_with_masks, render_mask } from "../engine/pixelcam_engine";
 
 export type EngineMasks = {
   /** JSON array of mask ids, e.g. `["dress"]`. */
@@ -39,12 +39,18 @@ export type WorkerRequest =
       pipelineJson: string;
       maskIdsJson?: string;
       masks?: ArrayBuffer;
+    }
+  | {
+      type: "renderMask";
+      requestId: number;
+      declJson: string;
     };
 
 export type WorkerResponse =
   | { type: "ready" }
   | { type: "processed"; jobId: number; pixels: ArrayBuffer; width: number; height: number }
   | { type: "fullProcessed"; requestId: number; pixels: ArrayBuffer; width: number; height: number }
+  | { type: "maskRendered"; requestId: number; data: ArrayBuffer }
   | { type: "error"; jobId?: number; requestId?: number; message: string };
 
 const ready = init().then(() => {
@@ -151,6 +157,24 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
             height: out.height,
           },
           [out.pixels.buffer as ArrayBuffer],
+        );
+      } catch (err) {
+        post({ type: "error", requestId: msg.requestId, message: String(err) });
+      }
+      break;
+    }
+
+    case "renderMask": {
+      if (!preview) {
+        post({ type: "error", requestId: msg.requestId, message: "no preview image loaded" });
+        return;
+      }
+      try {
+        const plane = render_mask(preview.pixels, preview.width, preview.height, msg.declJson);
+        const copy = Float32Array.from(plane);
+        post(
+          { type: "maskRendered", requestId: msg.requestId, data: copy.buffer as ArrayBuffer },
+          [copy.buffer as ArrayBuffer],
         );
       } catch (err) {
         post({ type: "error", requestId: msg.requestId, message: String(err) });

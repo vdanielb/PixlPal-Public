@@ -25,6 +25,8 @@ export interface RunAgentOptions {
   segment?: import("./tools").SegmentHost;
   /** Host mask-invert callback; required for the invert_mask tool to succeed. */
   invertMask?: import("./tools").InvertMaskHost;
+  /** Host parametric-mask callback; required for the create_mask tool to succeed. */
+  createMask?: import("./tools").CreateMaskHost;
   /** Host mask-bounds callback; required for subject-centered set_frame crops. */
   getMaskBounds?: import("./tools").MaskBoundsHost;
   maxSteps?: number;
@@ -108,6 +110,7 @@ export async function runAgent(options: RunAgentOptions): Promise<RunAgentResult
         imageStats: options.imageStats,
         segment: options.segment,
         invertMask: options.invertMask,
+        createMask: options.createMask,
         getMaskBounds: options.getMaskBounds,
         signal: options.signal,
       });

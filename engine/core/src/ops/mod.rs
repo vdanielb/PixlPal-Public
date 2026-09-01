@@ -8,6 +8,7 @@
 //!   the image's smaller dimension so results are resolution-independent —
 //!   a downscaled preview looks like the full-resolution export.
 
+pub mod blacks_whites;
 pub mod bloom;
 pub mod color_balance;
 pub mod color_shift;
@@ -16,9 +17,9 @@ pub mod dodge_burn;
 pub mod exposure;
 pub mod film_softness;
 pub mod grain;
+pub mod hsl_mixer;
 pub mod halation;
 pub mod lens_blur;
-pub mod lift_blacks;
 pub mod saturation;
 pub mod shadows_highlights;
 pub mod tone_curve;
@@ -42,6 +43,85 @@ pub(crate) mod util {
     pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
         let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
+    }
+
+    /// Hue in 0..360, saturation and lightness in 0..1.
+    #[inline]
+    pub fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let l = (max + min) * 0.5;
+        let d = max - min;
+        if d < 1e-6 {
+            return (0.0, 0.0, l);
+        }
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min).max(1e-6)
+        };
+        let h = if (max - r).abs() <= 1e-6 {
+            let mut hue = (g - b) / d;
+            if g < b {
+                hue += 6.0;
+            }
+            hue
+        } else if (max - g).abs() <= 1e-6 {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        (h * 60.0, s.clamp(0.0, 1.0), l)
+    }
+
+    #[inline]
+    fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+        let mut t = t;
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            return p + (q - p) * 6.0 * t;
+        }
+        if t < 0.5 {
+            return q;
+        }
+        if t < 2.0 / 3.0 {
+            return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+        }
+        p
+    }
+
+    /// Inverse of [`rgb_to_hsl`]. Hue is degrees (any wrap); S/L are 0..1.
+    #[inline]
+    pub fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+        let s = s.clamp(0.0, 1.0);
+        let l = l.clamp(0.0, 1.0);
+        if s < 1e-6 {
+            return (l, l, l);
+        }
+        let q = if l < 0.5 {
+            l * (1.0 + s)
+        } else {
+            l + s - l * s
+        };
+        let p = 2.0 * l - q;
+        let hk = (((h % 360.0) + 360.0) % 360.0) / 360.0;
+        (
+            hue_to_rgb(p, q, hk + 1.0 / 3.0),
+            hue_to_rgb(p, q, hk),
+            hue_to_rgb(p, q, hk - 1.0 / 3.0),
+        )
+    }
+
+    /// Shortest distance on the hue wheel, in degrees (0..180).
+    #[inline]
+    pub fn hue_distance(a: f32, b: f32) -> f32 {
+        let d = (((a - b) % 360.0) + 360.0) % 360.0;
+        d.min(360.0 - d)
     }
 
     /// Apply `f(r, g, b) -> (r, g, b)` to every pixel, leaving alpha alone.

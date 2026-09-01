@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   mergeOpStateForMask,
+  opStateToPipeline,
   projectOpStateForMask,
   type OpState,
 } from "@pixelcam/shared";
@@ -55,5 +56,22 @@ describe("projectOpStateForMask / mergeOpStateForMask", () => {
     const next = mergeOpStateForMask(full, {}, "dress");
     expect(next.saturation).toBeUndefined();
     expect(next.exposure).toEqual({ params: { amount: 0.2 } });
+  });
+});
+
+describe("opStateToPipeline versions", () => {
+  it("emits version 4 when a parametric mask is present", () => {
+    const pipeline = opStateToPipeline(
+      { exposure: { params: { amount: -0.2 }, mask: "luma" } },
+      [
+        {
+          id: "luma",
+          source: "luminance_range",
+          params: { min: 0.7, max: 1, softness: 0.1 },
+        },
+      ],
+    );
+    expect(pipeline.version).toBe(4);
+    expect(pipeline.masks?.[0]?.source).toBe("luminance_range");
   });
 });

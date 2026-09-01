@@ -1,13 +1,13 @@
 /**
  * TypeScript mirror of `pipeline.schema.json` and the Rust engine's
- * `pipeline.rs`. Versions 1..3 (v2 adds optional masks, v3 adds the optional
- * frame transform: rotate + crop applied after every operation).
+ * `pipeline.rs`. Versions 1..4 (v2 adds optional masks, v3 adds the optional
+ * frame transform, v4 adds engine-computed parametric mask sources).
  */
 
 import type { FrameTransform } from "./frame";
 
-export const PIPELINE_VERSION = 3 as const;
-export type PipelineVersion = 1 | 2 | 3;
+export const PIPELINE_VERSION = 4 as const;
+export type PipelineVersion = 1 | 2 | 3 | 4;
 
 export interface ExposureParams {
   /** -1..1 → ±2.5 stops */
@@ -34,9 +34,11 @@ export interface ToneCurveParams {
   points?: [number, number][];
 }
 
-export interface LiftBlacksParams {
-  /** 0..1 */
-  amount?: number;
+export interface BlacksWhitesParams {
+  /** -1..1; positive lifts the black point, negative crushes */
+  blacks?: number;
+  /** -1..1; positive stretches brights (can clip), negative pulls the white point in */
+  whites?: number;
 }
 
 export type DodgeBurnRange = "shadows" | "midtones" | "highlights";
@@ -64,6 +66,23 @@ export interface ColorShiftParams {
   /** -1..1 → ±180° hue rotation */
   hue?: number;
 }
+
+export const HSL_BANDS = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "aqua",
+  "blue",
+  "purple",
+  "magenta",
+] as const;
+
+export type HslBand = (typeof HSL_BANDS)[number];
+
+export type HslMixerParams = {
+  [K in HslBand as `${K}_hue` | `${K}_sat` | `${K}_lum`]?: number;
+};
 
 export interface GrainParams {
   /** 0..1 */
@@ -124,11 +143,12 @@ type OpBody =
   | { op: "contrast"; params?: ContrastParams }
   | { op: "shadows_highlights"; params?: ShadowsHighlightsParams }
   | { op: "tone_curve"; params?: ToneCurveParams }
-  | { op: "lift_blacks"; params?: LiftBlacksParams }
+  | { op: "blacks_whites"; params?: BlacksWhitesParams }
   | { op: "dodge_burn"; params?: DodgeBurnParams }
   | { op: "saturation"; params?: SaturationParams }
   | { op: "color_balance"; params?: ColorBalanceParams }
   | { op: "color_shift"; params?: ColorShiftParams }
+  | { op: "hsl_mixer"; params?: HslMixerParams }
   | { op: "grain"; params?: GrainParams }
   | { op: "film_softness"; params?: FilmSoftnessParams }
   | { op: "vignette"; params?: VignetteParams }
@@ -141,15 +161,74 @@ export type Operation = OpBody & MaskRef;
 export type OpName = OpBody["op"];
 
 /**
- * Host-side mask declaration. The engine ignores `source` / `prompt` and only
- * consumes the bitmap the host supplies under `id`.
+ * Host-side mask declaration. Host bitmaps (segmentation / invert) are supplied
+ * as planes at apply time. Parametric sources (`luminance_range`, `color_range`,
+ * `linear_gradient`, `radial_gradient`) are computed by the engine from `params`
+ * against the input image.
  */
+export const PARAMETRIC_MASK_SOURCES = [
+  "luminance_range",
+  "color_range",
+  "linear_gradient",
+  "radial_gradient",
+] as const;
+
+export type ParametricMaskSource = (typeof PARAMETRIC_MASK_SOURCES)[number];
+export type HostMaskSource = "segmentation" | "invert";
+export type MaskSourceKind = HostMaskSource | ParametricMaskSource;
+
+export interface LuminanceRangeMaskParams {
+  min?: number;
+  max?: number;
+  softness?: number;
+}
+
+export interface ColorRangeMaskParams {
+  hue?: number;
+  range?: number;
+  softness?: number;
+  satMin?: number;
+  lumMin?: number;
+  lumMax?: number;
+}
+
+export interface LinearGradientMaskParams {
+  x0?: number;
+  y0?: number;
+  x1?: number;
+  y1?: number;
+}
+
+export interface RadialGradientMaskParams {
+  cx?: number;
+  cy?: number;
+  radiusX?: number;
+  radiusY?: number;
+  softness?: number;
+}
+
+export type MaskParams =
+  | LuminanceRangeMaskParams
+  | ColorRangeMaskParams
+  | LinearGradientMaskParams
+  | RadialGradientMaskParams;
+
 export interface MaskDeclaration {
   id: string;
-  source?: string;
+  source?: MaskSourceKind | string;
   prompt?: string;
   /** Feather radius as a fraction of the image's smaller side. */
   feather?: number;
+  params?: MaskParams;
+}
+
+export function isParametricMaskSource(
+  source: string | undefined,
+): source is ParametricMaskSource {
+  return (
+    source !== undefined &&
+    (PARAMETRIC_MASK_SOURCES as readonly string[]).includes(source)
+  );
 }
 
 export interface Pipeline {
@@ -158,7 +237,7 @@ export interface Pipeline {
   operations: Operation[];
   /**
    * Non-destructive rotate + crop, applied by the engine after all
-   * operations. Requires version 3.
+   * operations. Requires version 3+.
    */
   frame?: FrameTransform;
 }

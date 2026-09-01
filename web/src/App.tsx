@@ -5,7 +5,7 @@ import {
   type FrameTransform,
   type MaskDeclaration,
 } from "@pixelcam/shared";
-import type { ImageStats, InvertMaskHost, MaskBoundsHost, SegmentHost } from "@pixelcam/ai";
+import type { ImageStats, InvertMaskHost, MaskBoundsHost, SegmentHost, CreateMaskHost } from "@pixelcam/ai";
 import { ChatPanel } from "./components/ChatPanel";
 import { Controls } from "./components/Controls";
 import { Dropzone } from "./components/Dropzone";
@@ -56,12 +56,7 @@ export function App() {
 
   const maskDeclarations: MaskDeclaration[] = useMemo(() => {
     void maskVersion;
-    return maskStoreRef.current.list().map((m) => ({
-      id: m.id,
-      source: m.invertedFrom ? "invert" : "segmentation",
-      prompt: m.prompt,
-      feather: m.feather,
-    }));
+    return maskStoreRef.current.declarations();
   }, [maskVersion]);
 
   const pipeline = useMemo(
@@ -134,6 +129,45 @@ export function App() {
     [],
   );
 
+  const runCreateMask = useCallback<CreateMaskHost>(
+    async (input) => {
+      if (!image) return { error: "no photo is open, so a mask cannot be created." };
+      try {
+        const decl: MaskDeclaration = {
+          id: input.id ?? input.type,
+          source: input.type,
+          prompt: input.prompt,
+          feather: input.feather ?? 0.02,
+          params: input.params,
+        };
+        const plane = await engine.renderMask(JSON.stringify(decl));
+        const width = image.preview.width;
+        const height = image.preview.height;
+        if (plane.length !== width * height) {
+          return { error: "mask render size did not match the preview." };
+        }
+        const stored = maskStoreRef.current.put({
+          prompt: input.prompt,
+          mask: { width, height, data: plane },
+          segmenterId: "engine",
+          feather: decl.feather,
+          preferredId: decl.id,
+          source: input.type,
+          params: input.params,
+        });
+        setMaskVersion((v) => v + 1);
+        setActiveMaskId(stored.id);
+        return { maskId: stored.id, coverage: stored.coverage };
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return { error: "mask creation was cancelled." };
+        }
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    [image, engine],
+  );
+
   const runGetMaskBounds = useCallback<MaskBoundsHost>(async (maskId) => {
     const stored = maskStoreRef.current.get(maskId.trim());
     if (!stored) {
@@ -154,6 +188,7 @@ export function App() {
     getPreviewImage: () => (image ? (engine.previewFrame ?? image.preview) : null),
     segment: runSegment,
     invertMask: runInvertMask,
+    createMask: runCreateMask,
     getMaskBounds: runGetMaskBounds,
     onApplyEdit: (nextOpState) => history.commit({ opState: nextOpState }),
   });
@@ -190,6 +225,7 @@ export function App() {
     }),
     segment: runSegment,
     invertMask: runInvertMask,
+    createMask: runCreateMask,
     getMaskBounds: runGetMaskBounds,
   });
 
@@ -285,7 +321,9 @@ export function App() {
           image.full.width,
           image.full.height,
         );
-        fullMasks = { maskIdsJson: JSON.stringify(ids), masks: data };
+        if (ids.length > 0) {
+          fullMasks = { maskIdsJson: JSON.stringify(ids), masks: data };
+        }
       }
       const processed = await engine.processFull(image.full, pipelineJson, fullMasks);
       await exportImage(processed, exportFormat, image.fileName);
